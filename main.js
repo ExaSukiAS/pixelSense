@@ -197,6 +197,19 @@ esp_connect();  // connect to esp32
   const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" , generationConfig});  // initialize gemini for normal tasks
   const modelCoord = genAI.getGenerativeModel({ model: "gemini-1.5-flash" , generationConfig});  // initialize gemini for coordination
 
+  const instructionFilePath = 'instructions.txt'; // instruction text file path
+  let instructionTxt = fs.readFileSync(instructionFilePath, 'utf8');    // read the instruction file
+  let instructions = [['.obj_dtc', '.img_des', '.txt_rec', '.freeform', '.coord'], [``, ``, ``, ``, ``]]; // 2D array for instruction keys and data
+
+  // fetches data from the instruction text file, formats it and stores in the "instructions" array
+  let instructionArray = instructionTxt.split('$$');
+  instructionArray.forEach((element, index) => {
+      let elementIndex = instructions[0].indexOf(element);
+      if(elementIndex > -1){
+          instructions[1][elementIndex] = instructionArray[index+1];
+      }
+  });
+
   // function to run the AI, display text on UI and output speech
   async function run_AI(prompt, mode, voice_on) {
     win.webContents.send("remove_boxes", 1);
@@ -211,55 +224,9 @@ esp_connect();  // connect to esp32
         }
     }
 
-    // select teh right instruction for AI
-    switch (mode) {
-        case ".obj_dtc":
-          AI_instruction = `
-          You are an assistant for blind people. You will get an image and you have to tell the name objects in the image. 
-          `;
-          break;
-        case ".img_des":
-          AI_instruction = `
-          You are an assistant for blind people. You will get an image, and you have to describe the image to the person.
-          `;
-          break;
-        case ".txt_rec":
-          AI_instruction = `
-          You are an assistant for blind people. You will get an image and identify and tell any text, it might be the text of a signboard, book, paper or anything else containing text.
-          `;
-          break;
-        case ".freeform":
-          AI_instruction = `
-          You are an assistant for blind people. You will get an image and a question. You have to properly answer the question based on the image. Be natural, don't use the word "in the image" or "the image shows", use words like, "here there is a..." make the conversation like the blind is seeing, not you describing him.
-          `;
-          break;
-        case ".coord":
-          AI_instruction = `
-          Detect an object in an image which is provided by the user and a hand wearing black glove, with no more than 1 items. Output a json list where each entry contains the 2D bounding box(xmin, xmax, ymin, ymax) in "box_2d" and a text label in "label". Also, give instruction in "instruction" in human language so that a blind person can also grab the object by listening to your response. Give the instruction in a way to grab th object in perspective to teh hand, use words like up, front, behind, left, right, on top of etc. to make teh instruction as helpful as possible. your output format:
-          {
-            "box_2d": [
-              {
-                "xmin": 0,
-                "xmax": 0,
-                "ymin": 0,
-                "ymax": 0,
-                "label": "object-name"
-              },
-              {
-                "xmin": 0,
-                "xmax": 0,
-                "ymin": 0,
-                "ymax": 0,
-                "label": "hand"
-              }
-            ],
-            "instruction": "instruction-here"
-          }
-          `;
-          break;
-        default:
-            AI_instruction = "";
-    }
+    // select the right instruction for AI
+    let instructionKeyIndex = instructions[0].indexOf(mode)
+    AI_instruction = instructions[1][instructionKeyIndex];
 
     // json to combine prompt and AI instruction
     const promptparts = [
