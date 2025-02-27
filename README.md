@@ -38,9 +38,3 @@ To run PixelSense, please follow these steps:
    ```
 
    **Important:** Replace `"your-api-key"` with your actual Gemini API key. Ensure the API key is correctly placed within the JSON structure.
-
----
-
-**PixelSense** aims to empower visually impaired individuals by providing them with enhanced environmental awareness and assistance through advanced technology integrated into a comfortable and familiar wearable form factor.
-
-```
