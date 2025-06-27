@@ -1,35 +1,26 @@
 #include <WiFi.h>
 #include <WebSocketsServer.h>
 #include "esp_camera.h"
-/*
-#include "BluetoothSerial.h"
+#include <Wire.h>
+#include <Adafruit_VL53L0X.h>
+#include "fb_gfx.h"
 
-#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
-#endif
+// For brownout detector problems
+#include "soc/soc.h" 
+#include "soc/rtc_cntl_reg.h" 
 
-BluetoothSerial SerialBT;*/
-
+// Wifi credentials
 const char* ssid = "Amartya";
 const char* password = "amartya@@2020";
 
-float touch_1;
-float touch_2;
-float voltage;
+camera_config_t config; // stores camera configuration
 
-String data_serial;
-String ipAddr;
-
-WebSocketsServer webSocketServer(9000); 
-
-camera_config_t config;
-
+// defining camera pins
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM     0
 #define SIOD_GPIO_NUM     26
 #define SIOC_GPIO_NUM     27
-
 #define Y9_GPIO_NUM       35
 #define Y8_GPIO_NUM       34
 #define Y7_GPIO_NUM       39
@@ -42,20 +33,33 @@ camera_config_t config;
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
+int wsPort = 9000;
+
+WebSocketsServer webSocketServer(wsPort);   // sebsocket server at port 9000
+
+bool isStreamingStarted = false;
+
+#define SEALEVELPRESSURE_HPA (1013.25)
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+
+int laserSensorSDA = 13;
+int laserSensorSCL = 14;
+int speakerPin = 2;
+int onBoardLedPin = 33;
+
+int touch1Pin = 15;
+int touch2Pin = 4;
+
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // Turn-off the brownout detector
+  Wire.begin(laserSensorSDA, laserSensorSCL); // attach laser sensor
   Serial.begin(115200);
-  //SerialBT.begin("pixelSense");
-  pinMode(33, OUTPUT);
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {}
-  ipAddr = WiFi.localIP().toString();
-  Serial.println("Connected to Wi-Fi");
-  Serial.print("ws://");
-  Serial.print(WiFi.localIP());
-  Serial.println(":9000");
-  digitalWrite(33, LOW);
-
+  // Attact GPIOs
+  ledcAttach(speakerPin, 50, 8);
+  pinMode(onBoardLedPin, OUTPUT);
+  pinMode(touch1Pin, INPUT);
+  pinMode(touch2Pin, INPUT);
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
   config.pin_d0 = Y2_GPIO_NUM;
@@ -74,67 +78,77 @@ void setup() {
   config.pin_sscb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
+
+  // additional camera configuration
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-
-  config.frame_size = FRAMESIZE_QXGA; 
-  config.jpeg_quality = 10;
+  config.frame_size = FRAMESIZE_UXGA; 
+  config.jpeg_quality = 20;
   config.fb_count = 2;
+  config.grab_mode = CAMERA_GRAB_LATEST;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
-    return;
+    Serial.printf("Camera init failed with error 0x%x, Restarting...", err);
+    ESP.restart();
+  }
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi
+  Serial.println("Connected to Wi-Fi");
+  Serial.print("ws://");Serial.print(WiFi.localIP());Serial.print(":");Serial.println(wsPort);
+
+  // act if there's some problem with laser sensor
+  if (!lox.begin()) {
+    while(1){
+      playTone(5000, true);
+      delay(400);
+      playTone(5000, false);
+      delay(400);
+    }
   }
 
   webSocketServer.begin();
   webSocketServer.onEvent(webSocketEvent);
+
+  digitalWrite(onBoardLedPin, LOW);
 }
 
 void loop() {
-  /*if(SerialBT.available() > 0){
-      int btData = SerialBT.readStringUntil('\n').toInt();
-      if(btData == 1){
-        SerialBT.println(ipAddr);
-      }
-  }*/
-  webSocketServer.loop();
-  /*
-  if (Serial.available() > 0) {
-    data_serial = Serial.readStringUntil('\n');
-    int numFloats;
-    float* floatArray = parseFloats(data_serial, numFloats);
-    touch_1 = floatArray[0];
-    touch_2 = floatArray[1];
-    voltage = floatArray[2];
+  VL53L0X_RangingMeasurementData_t measure;
+  lox.rangingTest(&measure, false);
 
-    if(touch_1 == 1){
-      sendImage(data_serial, 1);
-    } else if(touch_1 == 2){
-      sendImage(data_serial, 1);
-    } else if(touch_1 == 3){
-      sendImage(data_serial, 0);
-    } else if(touch_2 == 1){
-      sendImage(data_serial, 1);
-    } else if(touch_2 == 2){
-      sendImage(data_serial, 0);
-    } else if(touch_2 == 3){
-      sendImage(data_serial, 1);
+  if (measure.RangeStatus != 4) { // phase failures have incorrect data
+    int distance =  measure.RangeMilliMeter; 
+
+    if(distance < 80){
+      playTone(4000, true);
+    } else {
+      playTone(4000, false);
     }
-  }*/
+  } else {
+    playTone(4000, false);
+  }
+
+  webSocketServer.loop();
 }
 
+// handles incoming data through websocket
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch (type) {
     case WStype_TEXT:
       if (String((char*)payload) == "captureHigh") {
-        config.frame_size = FRAMESIZE_QXGA;
-        data_serial = '0.00';
-        sendImage(data_serial, 1);
+        config.frame_size = FRAMESIZE_UXGA;
+        delay(20);
+        sendImage();
       } else if (String((char*)payload) == "captureLow"){
         config.frame_size = FRAMESIZE_VGA;
-        data_serial = '0.00';
-        sendImage(data_serial, 1);
+        delay(20);
+        sendImage();
+      } else if (String((char*)payload) == "startStream"){
+        toggleStreaming(true);
+      } else if (String((char*)payload) == "stopStream"){
+        toggleStreaming(false);
       }
       break;
     case WStype_DISCONNECTED:
@@ -144,47 +158,85 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
-void sendImage(String message_to_send, bool image_send) {
-  if(image_send){
-    camera_fb_t * fb = NULL;
+// sends the image via websocket
+void sendImage() {
+  camera_fb_t * fb = NULL;
+  fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("Camera capture failed");
+    return;
+  } else {
+    Serial.println("Image captured");
+  }
+  webSocketServer.broadcastBIN(fb->buf, fb->len);
+  esp_camera_fb_return(fb);
+}
 
-    for (int i = 0; i < 3; i++) {
-      fb = esp_camera_fb_get();
-      if (fb) {
-        esp_camera_fb_return(fb);
-      }
-      delay(50); 
+// toggles streaming state
+void toggleStreaming(bool toggle){
+  if(toggle){
+    isStreamingStarted = true;
+    Serial.println("Streaming started");
+    streamImage();
+  } else {
+    isStreamingStarted = false;
+    Serial.println("Streaming stopped");
+  }
+}
+
+// streams images
+void streamImage(){
+  config.frame_size = FRAMESIZE_VGA;  // set to VGA for higher framerate
+  webSocketServer.broadcastTXT("$#TXT#$streamingStarted");
+  delay(20);
+  camera_fb_t * fb = NULL;
+  while(isStreamingStarted){
+    if(readTouchDebounced(touch2Pin) == true){
+      toggleStreaming(false);
+      webSocketServer.broadcastTXT("$#TXT#$streamingStopped");
+      playTone(1000, true);
+      delay(200);
+      playTone(1000, false);
+      return;
     }
-
     fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("Camera capture failed");
-      return;
+      fb = NULL;
     } else {
-      Serial.println("Image captured");
+      webSocketServer.broadcastBIN(fb->buf, fb->len);
+      esp_camera_fb_return(fb);
+      fb = NULL;
     }
-    webSocketServer.broadcastBIN(fb->buf, fb->len);
-    esp_camera_fb_return(fb);
-    delay(50);
   }
-
-  webSocketServer.broadcastTXT(message_to_send); 
+  return;
 }
 
-float* parseFloats(String input, int &numFloats) {
-  static float floatArray[10];  
-  int index = 0;
-  char *token;
-
-  char charArray[input.length() + 1];
-  input.toCharArray(charArray, input.length() + 1);
-
-  token = strtok(charArray, ",");
-  while (token != NULL && index < 10) {  
-    floatArray[index] = atof(token);
-    token = strtok(NULL, ",");
-    index++;
+bool prevToggle = false;
+int prevFreq = 0;
+// plays tone with speaker
+void playTone(int freq, bool toggle){
+  if((prevToggle == toggle) && (prevFreq == freq)){
+    return;
   }
-  numFloats = index;
-  return floatArray;
+  if(toggle){
+    ledcWriteTone(speakerPin, freq);
+  } else {
+    ledcWrite(speakerPin, 0);
+  }
+  prevToggle = toggle; 
+  prevFreq = freq;
+}
+
+// Reads touch pin with debounce
+bool readTouchDebounced(int pin) {
+  const int numReadings = 5;  
+  int totalScore = 0;     
+  for (int i = 0; i < numReadings; i++) {
+    totalScore += digitalRead(pin);
+    delay(1);  
+  }
+  float score = 1 - (totalScore / (float)numReadings);  
+  
+  return (score > 0.5); // Return true if the score is above threshold (considered pressed)
 }

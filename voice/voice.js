@@ -28,6 +28,7 @@ speakButton.addEventListener('click', () => {
     };
 
     synth.speak(utterance);
+    console.log("speaking:", nextChunk);
   }
 
   console.log("Sound Enabled");

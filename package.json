@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron main.js",
-    "start-test": "electron ip_test/main.js"
+    "start-CSRTtest": "electron CSRTtest.js"
   },
   "author": "",
   "license": "ISC",

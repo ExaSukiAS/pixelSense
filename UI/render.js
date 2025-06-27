@@ -124,9 +124,8 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
         
         // update the image on its change
         ipcRenderer.on("update_img", (event, arg) => {
-            const timestamp = new Date().getTime();
-            const imageUrl = `../user.jpg?${timestamp}`;
-            image_show.setAttribute('src', imageUrl);
+            image_show.setAttribute('src', "data:image/png;base64,"+arg);
+            image_show.style.opacity = '1';
         })
         
         // for smooth transition of dynamic island's loading bar
