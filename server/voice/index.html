@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>voice</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space Grotesk:wght@400;700&display=swap"/>
+</head>
+
+<style>
+  body{
+    background-color: #131313;
+  } 
+  :root {
+  --font-space-grotesk: "Space Grotesk";
+  }
+  #speakButton{
+    cursor: pointer;
+    border: none;
+    margin: 20px;
+    background-color: #242424;
+    color: white;
+    font-family: var(--font-space-grotesk);
+    font-size: 24px;
+    border-radius: 10px;
+    transition: background-color 0.1s ease-in-out, color 0.1s ease-in-out;
+  }
+  #speakButton:hover{
+    background-color: #ffffff;
+    color: #131313;
+  }
+  #speakButton:active{
+    background-color: #000000;
+    color: #ffffff;
+  }
+</style>
+
+<body> 
+  <button id = "speakButton">enable sound</button>
+</body>
+<script src="voice.js" type="module"></script>
+</html>
