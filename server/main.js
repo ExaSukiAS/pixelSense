@@ -1,10 +1,9 @@
-const { app, BrowserWindow, ipcMain, Menu, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require("fs");
 const WebSocket = require('ws');
-const path = require('path');
-const sharp = require('sharp');
 const express = require('express');
+const { spawn } = require('child_process');
 
 // create window
 let win;
@@ -37,13 +36,13 @@ function restartApp() {
   app.quit();
 }
 
-wsAudio.on('connection', ws => {  // check if audio feature is turned on
-  let espWsAddr = 'ws://192.168.68.105:9000';
+wsAudio.on('connection', audio => {  // check if audio feature is turned on
+  const espWsAddr = 'ws://192.168.68.106:9000';
   win.webContents.send("audio", 1); 
   console.log("sound Enabled");
 
-  let mode;
-  let esp_ws = new WebSocket(espWsAddr);  // open websocket
+  let currentMode;
+  const esp_ws = new WebSocket(espWsAddr);  // open websocket
   let currentImageBase64 = null; // variable to store the current image base64 data
 
   esp_ws.on('open', () => {   // check if esp32 websocket port is opened
@@ -53,9 +52,8 @@ wsAudio.on('connection', ws => {  // check if audio feature is turned on
 
   class modeExecuter {
     executeMode(feature){
-      mode = feature; // set the mode to the selected feature
-      console.log(mode);
-      switch (mode) {
+      currentMode = feature; // set the currentMode to the selected feature
+      switch (currentMode) {
         case ".obj_dtc":
             this.object_detection();
             break;
@@ -75,129 +73,220 @@ wsAudio.on('connection', ws => {  // check if audio feature is turned on
     }
     // function for text recognition feature
     async text_recognition(){
-      mode = '.txt_rec';
+      currentMode = '.txt_rec';
 
       win.webContents.send("back_msg", 'Waiting for AI to respond... ...');
       win.webContents.send("level_indicate", 60);
 
-      await run_AI(0, mode, true);
+      await run_AI(0, currentMode, true);
       win.webContents.send("level_indicate", 100);
 
       const terminate_handler = async (websocket_event) => {
         if(websocket_event.data == "terminate_task"){
           win.webContents.send("terminate", 1);
-          ws.removeEventListener('message', terminate_handler);
+          audio.removeEventListener('message', terminate_handler);
         }
       };
-      ws.addEventListener('message', terminate_handler);
+      audio.addEventListener('message', terminate_handler);
     }
 
     // function for object detection feature
     async object_detection(){
-      mode = '.obj_dtc';
+      currentMode = '.obj_dtc';
 
       win.webContents.send("back_msg", 'Waiting for AI to respond... ...');
       win.webContents.send("level_indicate", 60);
 
-      await run_AI(0, mode, true);
+      await run_AI(0, currentMode, true);
       win.webContents.send("level_indicate", 100);
 
       const terminate_handler = async (websocket_event) => {
         if(websocket_event.data == 'terminate_task'){
           win.webContents.send("terminate", 1);
-          ws.removeEventListener('message', terminate_handler);
+          audio.removeEventListener('message', terminate_handler);
         }
       };
-      ws.addEventListener('message', terminate_handler);
+      audio.addEventListener('message', terminate_handler);
     }
 
     // function for image description feature
     async image_description(){
-      mode = '.img_des';
+      currentMode = '.img_des';
 
       win.webContents.send("back_msg", 'Waiting for AI to respond... ...');
       win.webContents.send("level_indicate", 60);
 
-      await run_AI(0, mode, true);
+      await run_AI(0, currentMode, true);
       win.webContents.send("level_indicate", 100);
 
       const terminate_handler = async (websocket_event) => {
         if(websocket_event.data == 'terminate_task'){
           win.webContents.send("terminate", 1);
-          ws.removeEventListener('message', terminate_handler);
+          audio.removeEventListener('message', terminate_handler);
         }
       };
-      ws.addEventListener('message', terminate_handler);
+      audio.addEventListener('message', terminate_handler);
     }
 
     // function for freeform feature
     async freeform(){
-      mode = '.freeform';
+      currentMode = '.freeform';
 
       win.webContents.send("back_msg", 'Waiting for user input... ...');
       win.webContents.send("level_indicate", 70);
-      ws.send('stt'); // get user input as voice 
+      audio.send('stt'); // get user input as voice 
       const messageHandler = async (websocket_event) => {
         console.log(websocket_event.data);
         win.webContents.send("back_msg", websocket_event.data);
-        await run_AI(websocket_event.data, mode, true); // run the AI and say teh ouput as voice
+        await run_AI(websocket_event.data, currentMode, true); // run the AI and say teh ouput as voice
         win.webContents.send("level_indicate", 100);
-        ws.removeEventListener('message', messageHandler);
+        audio.removeEventListener('message', messageHandler);
       };
-      ws.addEventListener('message', messageHandler);
+      audio.addEventListener('message', messageHandler);
 
       const terminate_handler = async (websocket_event) => {
         if(websocket_event.data == 'terminate_task'){
           win.webContents.send("terminate", 1);
-          ws.removeEventListener('message', terminate_handler);
+          audio.removeEventListener('message', terminate_handler);
         }
       };
-      ws.addEventListener('message', terminate_handler);
+      audio.addEventListener('message', terminate_handler);
     }
 
     // function for coordination feature
     async coordination(){
-      mode = '.coord';
+      globalImageHandlingEnabled = false; // disable image handling from esp32
+      currentMode = '.coord';
+      let coordinateJSON;
 
       win.webContents.send("back_msg", 'Waiting for user input... ...');
       win.webContents.send("level_indicate", 70);
-      ws.send('stt'); // get user input as voice 
+      audio.send('stt'); // get user input as voice 
       const messageHandler = async (websocket_event) => {
-        console.log(websocket_event.data);
         win.webContents.send("back_msg", "Getting coordinates of hand and " + websocket_event.data + "... ...");
-        await run_AI(websocket_event.data, mode, false); // run the AI 
+        coordinateJSON = await run_AI(websocket_event.data, currentMode, false); // run the AI and get the coordinates
+        console.log("Coordinates received from gemini:", coordinateJSON);
         win.webContents.send("level_indicate", 100);
-        ws.removeEventListener('message', messageHandler);
+        const pyCSRT = spawn('python', ['CSRTtracker.py']); // spawn a python process to run CSRT tracker with openCV
+        // handle message from esp32 to stop the loop and process frames
+        if (coordinateJSON) {
+          esp_ws.on('message', (data) => {
+            if (typeof data === 'string' && data.includes("$#TXT#$")) {
+              data = data.replace("$#TXT#$", "");
+              if (data == "streamingStopped") {
+                win.webContents.send("terminate", 1);
+                globalImageHandlingEnabled = true; // re-enable image handling
+                pyCSRT.kill(); // kill the python process
+                return; // stop processing frames
+              }
+            } else {
+              currentImageBase64 = data.toString('base64'); // store the image data as base64
+              win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+
+              const objecCoordinate = coordinateJSON.box_2d[0]; // get the coordinates of the object
+              const objectName = objecCoordinate.label;
+
+              const initializingFrame = currentImageBase64;
+              const objectRIO = [
+                objecCoordinate.xmin,
+                objecCoordinate.ymin,
+                objecCoordinate.xmax - objecCoordinate.xmin,
+                objecCoordinate.ymax - objecCoordinate.ymin
+              ]; // create rio for object
+              const frameAndRIO = { "imgBase64": initializingFrame, "rio": objectRIO };
+
+              pyCSRT.stdin.write(JSON.stringify(frameAndRIO) + '\n');  // send the initializing frame with rio to python process
+
+              function sendNextFrame() {
+                setTimeout(() => {
+                  const imgJSON = { "imgBase64": currentImageBase64 };
+                  pyCSRT.stdin.write(JSON.stringify(imgJSON) + '\n');  // send the next frames
+                }, 1000);
+              }
+
+              function drawRIO(rio){
+                let xmin = rio[0];
+                let ymin = rio[1];
+                let xmax = rio[2] + xmin;
+                let ymax = rio[3] + ymin;
+
+                let rioOBJ = {
+                  "box_2d": [
+                    {
+                      "xmin": xmin,
+                      "xmax": xmax,
+                      "ymin": ymin,
+                      "ymax": ymax,
+                      "label": objectName
+                    }
+                  ]
+                }
+
+                win.webContents.send("coord_process", rioOBJ);
+              }
+
+              let predictedRIO = []; // array to store the predicted rio from python process
+              pyCSRT.stdout.on('data', (data) => {
+                if (data.toString().trim() == 'initialized') {
+                  console.log("CSRT tracker initialized");
+                  sendNextFrame();
+                } else {
+                  data = data.toString().trim();
+                  data = data.replaceAll("(", '');
+                  data = data.replaceAll(")", '');
+                  predictedRIO = data.split(","); // get the predicted rio from python process
+                  console.log("Predicted RIO:", predictedRIO);
+                  drawRIO(predictedRIO);
+                  sendNextFrame();
+                }
+              });
+              // for debugging purpose
+              pyCSRT.stderr.on('data', (data) => {
+                console.error('Python error:', data.toString());
+              });
+            }
+          });
+        }
+        audio.removeEventListener('message', messageHandler);
       };
-      ws.addEventListener('message', messageHandler);
+      audio.addEventListener('message', messageHandler);
 
       const terminate_handler = async (websocket_event) => {
         if(websocket_event.data == 'terminate_task'){
           win.webContents.send("terminate", 1);
-          ws.removeEventListener('message', terminate_handler);
+          audio.removeEventListener('message', terminate_handler);
         }
       };
-      ws.addEventListener('message', terminate_handler);
+      audio.addEventListener('message', terminate_handler);
     }
   }
 
   const modeHandler = new modeExecuter(); // create an instance of modeExecuter class
 
   // image handling from esp32
+  let globalImageHandlingEnabled = true; // Toggle for enabling/disabling image handling from esp32
+  let initTries = 5;
   esp_ws.on('message', (data) => {
+    if (!globalImageHandlingEnabled) return; // Skip if disabled
+
     if(typeof data === 'string' && data.includes("$#TXT#$")){
       data = data.replace("$#TXT#$", "");
-      if(data == "streamingStarted"){
-        if(mode !== "stabelize_on"){
-          modeHandler.executeMode(mode); // run the mode that user wants
-        }
-      } else if(data == "streamingStopped"){
+      if(data == "streamingStopped"){
         win.webContents.send("terminate", 1);
       }
     } else {
-      currentImageBase64 = data.toString('base64'); // store the image data as base64
-      modeHandler.executeMode(mode); // handle the mode that user wants (mode var is already set by button click event)
-      win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+      if(currentMode == '.coord'){
+        initTries--;
+        if(initTries <= 0){
+          currentImageBase64 = data.toString('base64'); // store the image data as base64
+          win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+          modeHandler.executeMode(currentMode); // handle the currentMode that user wants (currentMode var is already set by button click event)
+        }
+      } else {
+        currentImageBase64 = data.toString('base64'); // store the image data as base64
+        win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+        modeHandler.executeMode(currentMode); // handle the currentMode that user wants (currentMode var is already set by button click event)
+      }
     }
   });
 
@@ -237,21 +326,21 @@ wsAudio.on('connection', ws => {  // check if audio feature is turned on
   });
 
   // function to run the AI, display text on UI and output speech
-  async function run_AI(prompt, mode, voice_on) {
+  async function run_AI(prompt, currentMode, voice_on) {
     win.webContents.send("remove_boxes", 1);
     var AI_instruction;
-    if (prompt == 0){ // handle if to prompt is provided
-        if (mode == ".obj_dtc"){
+    if (prompt == 0){ // handle if no prompt is provided
+        if (currentMode == ".obj_dtc"){
             prompt = 'What are the objects in this image?';
-        } else if (mode == ".img_des"){
+        } else if (currentMode == ".img_des"){
             prompt = 'Describe this image.';
-        } else if (mode == ".txt_rec"){
+        } else if (currentMode == ".txt_rec"){
             prompt = 'What is written here?';
         }
     }
 
     // select the right instruction for AI
-    let instructionKeyIndex = instructions[0].indexOf(mode)
+    let instructionKeyIndex = instructions[0].indexOf(currentMode)
     AI_instruction = instructions[1][instructionKeyIndex];
 
     // json to combine prompt and AI instruction
@@ -273,7 +362,7 @@ wsAudio.on('connection', ws => {  // check if audio feature is turned on
       }
     ];
 
-    if (mode == ".coord"){
+    if (currentMode == ".coord"){
       const result = await modelCoord.generateContentStream([promptparts, ...imageParts]); // get the output from gemini
       let text = '';  // stores the full-streamed text
       for await (const chunk of result.stream) {  // process each chunk of data from gemini
@@ -282,12 +371,7 @@ wsAudio.on('connection', ws => {  // check if audio feature is turned on
       }
       let cleanJsonString = text.replace(/^```json\n/, '').replace(/```$/, '');    //filter the string
       let fullJSON = JSON.parse(cleanJsonString);
-      let instruction_gemini = fullJSON.instruction;
-
-      win.webContents.send("back_msg", instruction_gemini);
-      win.webContents.send("coord_process", text);
-      ws.send(instruction_gemini); // say the text as voice
-      text = '';
+      return fullJSON;  // return the full JSON object
     } else {
       const result = await model.generateContentStream([promptparts, ...imageParts]); // get the output from gemini
       let text = '';  // stores the full-streamed text
@@ -302,14 +386,14 @@ wsAudio.on('connection', ws => {  // check if audio feature is turned on
         win.webContents.send("back_msg", text);
         if(chunk_array.length >= chunk_size){
           if(voice_on){
-            ws.send(chunk_array[0] + chunk_array[1]); // say the chunk as voice
+            audio.send(chunk_array[0] + chunk_array[1]); // say the chunk as voice
           }
           chunk_array.length = 0;
         }
       }
       if(chunk_array.length > 0){
         if(voice_on){
-          ws.send(chunk_array[0]);  // say the last chunk
+          audio.send(chunk_array[0]);  // say the last chunk
         }
       }
       chunk_array.length = 0;
@@ -320,40 +404,40 @@ wsAudio.on('connection', ws => {  // check if audio feature is turned on
   // check for any user event from renderer
   ipcMain.on("msg", (event, arg) => {
     if (arg === '.txt_rec'){
-      mode = arg;
+      currentMode = arg;
       win.webContents.send("back_msg", 'Fetching Image... ...');
       win.webContents.send("level_indicate", 20);
       requestCapture("captureHigh");
     } else if (arg === '.obj_dtc'){
-      mode = arg;
+      currentMode = arg;
       win.webContents.send("back_msg", 'Fetching Image... ...');
       win.webContents.send("level_indicate", 20);
       requestCapture("captureHigh");
     } else if (arg === '.img_des'){
-      mode = arg;
+      currentMode = arg;
       win.webContents.send("back_msg", 'Fetching Image... ...');
       win.webContents.send("level_indicate", 20);
       requestCapture("captureHigh");
     } else if (arg === '.freeform'){
-      mode = arg;
+      currentMode = arg;
       win.webContents.send("back_msg", 'Fetching Image... ...');
       win.webContents.send("level_indicate", 40);
       requestCapture("captureHigh");
     } else if (arg === '.ai_chat'){
-      mode = arg;
+      currentMode = arg;
       ai_chat();
     } else if (arg === '.coord'){
-      mode = arg;
+      currentMode = arg;
       win.webContents.send("back_msg", 'Fetching Image... ...');
       win.webContents.send("level_indicate", 40);
-      requestCapture("captureHigh");
+      requestCapture("startStream");
     } else if (arg === 'stabelize_on'){
-      mode = 'stabelize_on';
+      currentMode = 'stabelize_on';
       requestCapture("startStream");
     } else if (arg === 'stabelize_off'){
-      mode = 'stabelize_off';
+      currentMode = 'stabelize_off';
     } else if (arg === 'stop_speech'){
-      ws.send('tts_stop');
+      audio.send('tts_stop');
     } else if (arg == 'restart_app'){
       restartApp();
     }

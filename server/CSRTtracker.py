@@ -34,7 +34,7 @@ def main():
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if not initialized:
                 # extract the ROI from the first frame data
-                rio = frameData["rio"].split(",")
+                rio = frameData["rio"]
                 rio = tuple(map(int, rio))
 
                 OBJtracker = CSRTtracker(img, rio) # Initialize the tracker with the first frame and ROI
