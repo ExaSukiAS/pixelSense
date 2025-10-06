@@ -182,20 +182,28 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
             } else {
               currentImageBase64 = data.toString('base64'); // store the image data as base64
               win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+              let objectName = "";
+              let modelInit = false;
 
-              const objecCoordinate = coordinateJSON.box_2d[0]; // get the coordinates of the object
-              const objectName = objecCoordinate.label;
+              function initializeModel(){
+                if(modelInit){return;}
+                const objecCoordinate = coordinateJSON.box_2d[0]; // get the coordinates of the object
+                objectName = objecCoordinate.label;
 
-              const initializingFrame = currentImageBase64;
-              const objectRIO = [
-                objecCoordinate.xmin,
-                objecCoordinate.ymin,
-                objecCoordinate.xmax - objecCoordinate.xmin,
-                objecCoordinate.ymax - objecCoordinate.ymin
-              ]; // create rio for object
-              const frameAndRIO = { "imgBase64": initializingFrame, "rio": objectRIO };
+                const initializingFrame = currentImageBase64;
+                const objectRIO = [
+                  objecCoordinate.xmin,
+                  objecCoordinate.ymin,
+                  objecCoordinate.xmax - objecCoordinate.xmin,
+                  objecCoordinate.ymax - objecCoordinate.ymin
+                ]; // create rio for object
+                const frameAndRIO = { "imgBase64": initializingFrame, "rio": objectRIO };
 
-              pyCSRT.stdin.write(JSON.stringify(frameAndRIO) + '\n');  // send the initializing frame with rio to python process
+                pyCSRT.stdin.write(JSON.stringify(frameAndRIO) + '\n');  // send the initializing frame with rio to python process
+                modelInit = true;
+              }
+
+              initializeModel();
 
               function sendNextFrame() {
                 setTimeout(() => {
