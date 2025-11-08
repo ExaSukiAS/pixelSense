@@ -2,8 +2,9 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require("fs");
 const WebSocket = require('ws');
+const net = require('net');
 const express = require('express');
-const { spawn } = require('child_process');
+const { imageSize } = require('image-size');
 
 // create window
 let win;
@@ -30,6 +31,10 @@ voiceServer.listen(voicePort, () => {
 });
 
 const wsAudio = new WebSocket.Server({ port: 8080 });
+
+const CSRTtracker = net.createConnection({ port: 8001 }, () => {
+  console.log('Connected to Python CSRT tracker');
+});
 
 function restartApp() {
   app.relaunch();
@@ -67,7 +72,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
             this.freeform();
             break;
         case ".coord":
-            this.coordination();
+            this.initiateCoordination();
             break;
       }
     }
@@ -154,102 +159,37 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
     }
 
     // function for coordination feature
-    async coordination(){
-      globalImageHandlingEnabled = false; // disable image handling from esp32
+    async initiateCoordination(){
       currentMode = '.coord';
-      let coordinateJSON;
 
       win.webContents.send("back_msg", 'Waiting for user input... ...');
       win.webContents.send("level_indicate", 70);
-      audio.send('stt'); // get user input as voice 
-      const messageHandler = async (websocket_event) => {
-        win.webContents.send("back_msg", "Getting coordinates of hand and " + websocket_event.data + "... ...");
-        coordinateJSON = await run_AI(websocket_event.data, currentMode, false); // run the AI and get the coordinates
-        console.log("Coordinates received from gemini:", coordinateJSON);
-        win.webContents.send("level_indicate", 100);
-        const pyCSRT = spawn('python', ['CSRTtracker.py']); // spawn a python process to run CSRT tracker with openCV
-        // handle message from esp32 to stop the loop and process frames
-        if (coordinateJSON) {
-          esp_ws.on('message', (data) => {
-            if (typeof data === 'string' && data.includes("$#TXT#$")) {
-              data = data.replace("$#TXT#$", "");
-              if (data == "streamingStopped") {
-                win.webContents.send("terminate", 1);
-                globalImageHandlingEnabled = true; // re-enable image handling
-                pyCSRT.kill(); // kill the python process
-                return; // stop processing frames
-              }
-            } else {
-              currentImageBase64 = data.toString('base64'); // store the image data as base64
-              win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+      //audio.send('stt'); // get user input as voice 
+      //const messageHandler = async (websocket_event) => {
+        win.webContents.send("back_msg", "Getting initial coordinates of hand and " + /*websocket_event.data*/"pencil" + "... ...");
+        const initialCoordinate = await run_AI(/*websocket_event.data*/"pencil", currentMode, false); // get initial coordinates as JSON object
+        const objBox = initialCoordinate.box_2d.find(box => box.label === 'hand');
+        if (objBox) {
+          const imageBuffer = Buffer.from(currentImageBase64, 'base64'); // Decode base64 image to buffer
+          const { width: imageWidth, height: imageHeight } = imageSize(imageBuffer);// Get image dimensions
+          if (!imageWidth || !imageHeight) {return;}
 
-              const objecCoordinate = coordinateJSON.box_2d[0]; // get the coordinates of the object
-              const objectName = objecCoordinate.label;
+          // Convert normalized box (0–1000 scale) to pixel coordinates
+          const x = (objBox.xmin / 1000) * imageWidth;
+          const y = (objBox.ymin / 1000) * imageHeight;
+          const w = ((objBox.xmax - objBox.xmin) / 1000) * imageWidth;
+          const h = ((objBox.ymax - objBox.ymin) / 1000) * imageHeight;
 
-              const initializingFrame = currentImageBase64;
-              const objectRIO = [
-                objecCoordinate.xmin,
-                objecCoordinate.ymin,
-                objecCoordinate.xmax - objecCoordinate.xmin,
-                objecCoordinate.ymax - objecCoordinate.ymin
-              ]; // create rio for object
-              const frameAndRIO = { "imgBase64": initializingFrame, "rio": objectRIO };
-
-              pyCSRT.stdin.write(JSON.stringify(frameAndRIO) + '\n');  // send the initializing frame with rio to python process
-
-              function sendNextFrame() {
-                setTimeout(() => {
-                  const imgJSON = { "imgBase64": currentImageBase64 };
-                  pyCSRT.stdin.write(JSON.stringify(imgJSON) + '\n');  // send the next frames
-                }, 1000);
-              }
-
-              function drawRIO(rio){
-                let xmin = rio[0];
-                let ymin = rio[1];
-                let xmax = rio[2] + xmin;
-                let ymax = rio[3] + ymin;
-
-                let rioOBJ = {
-                  "box_2d": [
-                    {
-                      "xmin": xmin,
-                      "xmax": xmax,
-                      "ymin": ymin,
-                      "ymax": ymax,
-                      "label": objectName
-                    }
-                  ]
-                }
-
-                win.webContents.send("coord_process", rioOBJ);
-              }
-
-              let predictedRIO = []; // array to store the predicted rio from python process
-              pyCSRT.stdout.on('data', (data) => {
-                if (data.toString().trim() == 'initialized') {
-                  console.log("CSRT tracker initialized");
-                  sendNextFrame();
-                } else {
-                  data = data.toString().trim();
-                  data = data.replaceAll("(", '');
-                  data = data.replaceAll(")", '');
-                  predictedRIO = data.split(","); // get the predicted rio from python process
-                  console.log("Predicted RIO:", predictedRIO);
-                  drawRIO(predictedRIO);
-                  sendNextFrame();
-                }
-              });
-              // for debugging purpose
-              pyCSRT.stderr.on('data', (data) => {
-                console.error('Python error:', data.toString());
-              });
-            }
-          });
+          // Send as pixel ROI [x, y, width, height] to CSRT tracker
+          const rio = [x, y, w, h];
+          const imgJSON = {"imgBase64": currentImageBase64, "objRIO": rio};
+          CSRTtracker.write(JSON.stringify(imgJSON));
         }
-        audio.removeEventListener('message', messageHandler);
-      };
-      audio.addEventListener('message', messageHandler);
+
+        win.webContents.send("level_indicate", 100);
+        //audio.removeEventListener('message', messageHandler);
+      //};
+      /*audio.addEventListener('message', messageHandler);
 
       const terminate_handler = async (websocket_event) => {
         if(websocket_event.data == 'terminate_task'){
@@ -257,48 +197,62 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
           audio.removeEventListener('message', terminate_handler);
         }
       };
-      audio.addEventListener('message', terminate_handler);
+      audio.addEventListener('message', terminate_handler);*/
     }
   }
-
   const modeHandler = new modeExecuter(); // create an instance of modeExecuter class
 
   // image handling from esp32
-  let globalImageHandlingEnabled = true; // Toggle for enabling/disabling image handling from esp32
-  let initTries = 5;
+  let initTries = 5; // number of initial frames to skip for .coord mode (this is to allow the esp32 cam to stabelize the image stream)
+  let APItriggered = false;
   esp_ws.on('message', (data) => {
-    if (!globalImageHandlingEnabled) return; // Skip if disabled
-
     if(typeof data === 'string' && data.includes("$#TXT#$")){
       data = data.replace("$#TXT#$", "");
       if(data == "streamingStopped"){
+        // reset variables and UI
+        initTries = 5;
+        APItriggered = false
         win.webContents.send("terminate", 1);
       }
     } else {
-      if(currentMode == '.coord'){
+      currentImageBase64 = data.toString('base64'); // store the image data as base64
+      win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+      if(currentMode == '.coord'){ // start realtime coordination mode
         initTries--;
-        if(initTries <= 0){
-          currentImageBase64 = data.toString('base64'); // store the image data as base64
-          win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
-          modeHandler.executeMode(currentMode); // handle the currentMode that user wants (currentMode var is already set by button click event)
+        if(initTries <= 0){ 
+          if(!APItriggered){
+            APItriggered = true;
+            modeHandler.executeMode(currentMode); // handle the initiation coordination mode(once per stream)
+          }
         }
-      } else {
-        currentImageBase64 = data.toString('base64'); // store the image data as base64
-        win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+      } else { // handle other modes (non-realtime)
         modeHandler.executeMode(currentMode); // handle the currentMode that user wants (currentMode var is already set by button click event)
       }
     }
   });
 
+  // handle data received from python CSRT tracker
+  CSRTtracker.on('data', async (data) => {
+    const msg = JSON.parse(data.toString());
+    console.log('Received from python CSRT:', msg);
+  
+    if(msg.init == true){
+      const imgJSON = {"imgBase64": currentImageBase64};
+      CSRTtracker.write(JSON.stringify(imgJSON));
+      return;
+    }
+  });
+
 
   // function to fetch an image from esp32
+  // capture modes: "captureLow", "captureHigh", "startStream"
   function requestCapture(captureMode) {
     if (esp_ws.readyState === WebSocket.OPEN) {
       esp_ws.send(captureMode); 
     }
   }
 
-  const apiJSON = JSON.parse(fs.readFileSync('geminiAPI.json', 'utf8'));  // read api key from json file
+  const apiJSON = JSON.parse(fs.readFileSync('geminiAPI.json', 'utf8'));
   const apiKey = apiJSON.apiKey;
   const genAI = new GoogleGenerativeAI(apiKey); // create gemini session 
   
@@ -309,8 +263,8 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
     topP: 1,
     topK: 32,
   };
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" , generationConfig});  // initialize gemini for normal tasks
-  const modelCoord = genAI.getGenerativeModel({ model: "gemini-1.5-flash" , generationConfig});  // initialize gemini for coordination
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" , generationConfig});  // initialize gemini model for normal tasks
+  const modelCoord = genAI.getGenerativeModel({ model: "gemini-2.0-flash" , generationConfig});  // initialize gemini model for coordination
 
   const instructionFilePath = 'instructions.txt'; // instruction text file path
   let instructionTxt = fs.readFileSync(instructionFilePath, 'utf8');    // read the instruction file
