@@ -4,6 +4,7 @@ import base64
 import cv2
 import mediapipe as mp
 import numpy as np
+from termcolor import colored
 
 HOST = 'localhost'
 PORT = 8001
@@ -16,7 +17,7 @@ mp_hands = mp.solutions.hands
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.bind((HOST, PORT))
 server.listen(1)
-print(f"[Python] Listening on {HOST}:{PORT}")
+print(colored(f"\nListening on {HOST}:{PORT}", "green", attrs=["bold"]))
 
 # tracker variables
 initialized = False
@@ -42,7 +43,7 @@ class CSRTtracker:
 
 # Accept a connection from the Node.js server
 conn, addr = server.accept()
-print(f"[Python] Connected by {addr}")
+print(f"Connected by {addr}")
 
 # Initialize the Hands model
 with mp_hands.Hands(
@@ -78,11 +79,12 @@ with mp_hands.Hands(
             if not base64String:
                 continue
             
+            # Decode the base64 string to an image
             image_bytes = base64.b64decode(base64String)
             nparr = np.frombuffer(image_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            imgHeight, imgWidth, _ = img.shape
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR) # BGR format
+            imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # RGB format
+            imgHeight, imgWidth, _ = img.shape # image dimensions
 
             if img is None:
                 print("Error decoding image.")
@@ -105,11 +107,20 @@ with mp_hands.Hands(
                 (ox, oy, ow, oh) = map(int, frameData.get("objRIO", objRIO))
                 cv2.rectangle(img, (ox, oy), (ox + ow, oy + oh), (0, 255, 0), 2)
                 """
-                
+                # check for reset command
+                if frameData.get("reset", False):
+                    initialized = False
+                    OBJtracker = None
+                    print("Resetting tracker as requested.")
+                    continue
+
                 newObjRIO = OBJtracker.getObjCoordinate(img)
                 newHandRIO = getHandCoordinates(imgRGB, imgWidth, imgHeight)
                 if newObjRIO and newHandRIO:
-                    conn.send(json.dumps({"init": True, "objRIO": newObjRIO, "handRIO": newHandRIO}).encode())
+                    # convert rio to normalized format
+                    normObjRIO = [newObjRIO[0] / imgWidth, newObjRIO[1] / imgHeight, newObjRIO[2] / imgWidth, newObjRIO[3] / imgHeight]
+                    normHandRIO = [newHandRIO[0] / imgWidth, newHandRIO[1] / imgHeight, newHandRIO[2] / imgWidth, newHandRIO[3] / imgHeight]
+                    conn.send(json.dumps({"init": True, "objRIO": normObjRIO, "handRIO": normHandRIO}).encode())
                     """
                     # show predicted ROI of object
                     (ox, oy, ow, oh) = map(int, frameData.get("objRIO", newObjRIO))
@@ -125,3 +136,5 @@ with mp_hands.Hands(
             display_img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
             cv2.imshow("Tracking", display_img)
             """
+conn.close()
+server.close()

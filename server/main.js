@@ -164,21 +164,20 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
 
       win.webContents.send("back_msg", 'Waiting for user input... ...');
       win.webContents.send("level_indicate", 70);
-      //audio.send('stt'); // get user input as voice 
-      //const messageHandler = async (websocket_event) => {
-        win.webContents.send("back_msg", "Getting initial coordinates of hand and " + /*websocket_event.data*/"pencil" + "... ...");
-        const initialCoordinate = await run_AI(/*websocket_event.data*/"pencil", currentMode, false); // get initial coordinates as JSON object
-        const objBox = initialCoordinate.box_2d.find(box => box.label === 'hand');
-        if (objBox) {
+      audio.send('stt'); // get user input as voice 
+      const messageHandler = async (websocket_event) => {
+        win.webContents.send("back_msg", "Getting initial coordinates of hand and " + websocket_event.data + "... ...");
+        const initialCoordinate = await run_AI(websocket_event.data, currentMode, false); // get initial coordinates as JSON object from gemini
+        if (initialCoordinate) {
           const imageBuffer = Buffer.from(currentImageBase64, 'base64'); // Decode base64 image to buffer
           const { width: imageWidth, height: imageHeight } = imageSize(imageBuffer);// Get image dimensions
           if (!imageWidth || !imageHeight) {return;}
 
           // Convert normalized box (0–1000 scale) to pixel coordinates
-          const x = (objBox.xmin / 1000) * imageWidth;
-          const y = (objBox.ymin / 1000) * imageHeight;
-          const w = ((objBox.xmax - objBox.xmin) / 1000) * imageWidth;
-          const h = ((objBox.ymax - objBox.ymin) / 1000) * imageHeight;
+          const x = (initialCoordinate.xmin / 1000) * imageWidth;
+          const y = (initialCoordinate.ymin / 1000) * imageHeight;
+          const w = ((initialCoordinate.xmax - initialCoordinate.xmin) / 1000) * imageWidth;
+          const h = ((initialCoordinate.ymax - initialCoordinate.ymin) / 1000) * imageHeight;
 
           // Send as pixel ROI [x, y, width, height] to CSRT tracker
           const rio = [x, y, w, h];
@@ -187,9 +186,9 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
         }
 
         win.webContents.send("level_indicate", 100);
-        //audio.removeEventListener('message', messageHandler);
-      //};
-      /*audio.addEventListener('message', messageHandler);
+        audio.removeEventListener('message', messageHandler);
+      };
+      audio.addEventListener('message', messageHandler);
 
       const terminate_handler = async (websocket_event) => {
         if(websocket_event.data == 'terminate_task'){
@@ -197,7 +196,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
           audio.removeEventListener('message', terminate_handler);
         }
       };
-      audio.addEventListener('message', terminate_handler);*/
+      audio.addEventListener('message', terminate_handler);
     }
   }
   const modeHandler = new modeExecuter(); // create an instance of modeExecuter class
@@ -234,8 +233,9 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
   // handle data received from python CSRT tracker
   CSRTtracker.on('data', async (data) => {
     const msg = JSON.parse(data.toString());
-    console.log('Received from python CSRT:', msg);
-  
+    
+    win.webContents.send("drawBoxAndLine", [{x: msg.objRIO[0], y: msg.objRIO[1], width: msg.objRIO[2], height: msg.objRIO[3], label: 'Sample Box 1'},{x: msg.handRIO[0], y: msg.handRIO[1], width: msg.handRIO[2], height: msg.handRIO[3], label: 'Sample Box 2'}]);
+
     if(msg.init == true){
       const imgJSON = {"imgBase64": currentImageBase64};
       CSRTtracker.write(JSON.stringify(imgJSON));

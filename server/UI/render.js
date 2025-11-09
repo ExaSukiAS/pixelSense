@@ -2,34 +2,34 @@ const { ipcRenderer } = require('electron');
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked@4.0.10/lib/marked.esm.js';
 
 // get all UI elements
-let dynamic_island = document.querySelector('.dynamic_island');
+const dynamic_island = document.querySelector('.dynamic_island');
         
-let ai_chat = document.querySelector('.ai_chat');
-let freeform = document.querySelector('.freeform');
-let obj_dtc = document.querySelector('.obj_dtc');
-let txt_rec = document.querySelector('.txt_rec');
-let img_des = document.querySelector('.img_des');
-let coord = document.querySelector('.coord');
-let camera = document.querySelector('.camera');
+const ai_chat = document.querySelector('.ai_chat');
+const freeform = document.querySelector('.freeform');
+const obj_dtc = document.querySelector('.obj_dtc');
+const txt_rec = document.querySelector('.txt_rec');
+const img_des = document.querySelector('.img_des');
+const coord = document.querySelector('.coord');
+const camera = document.querySelector('.camera');
 
-let stop_btn = document.querySelector('.stop');
-let camera_btn = document.querySelector('.camera');
-let un_mute_btn = document.querySelector('.un_mute');
-let interrupt_btn = document.querySelector('.interrupt');
+const stop_btn = document.querySelector('.stop');
+const camera_btn = document.querySelector('.camera');
+const un_mute_btn = document.querySelector('.un_mute');
+const interrupt_btn = document.querySelector('.interrupt');
 
 
-let level = document.querySelector('.level');
-let level_text = document.querySelector('.level_text');
+const level = document.querySelector('.level');
+const level_text = document.querySelector('.level_text');
 
-let message = document.querySelector('.message');
-let image_show = document.querySelector('.image_show');
-let imageContainer = document.querySelector('.img_container');
+const message = document.querySelector('.message');
+const image_show = document.querySelector('.image_show');
+const imageContainer = document.querySelector('.img_container');
 
-let audio_icon = document.getElementById('audio_icon');
-let glass_connect = document.querySelector('.glass_connect span');
-let voltage  = document.querySelector('.voltage');
+const audio_icon = document.getElementById('audio_icon');
+const glass_connect = document.querySelector('.glass_connect span');
+const voltage  = document.querySelector('.voltage');
 
-let alignImageSpan = document.querySelector('.alignImage span');
+const alignImageSpan = document.querySelector('.alignImage span');
 
 ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned on
     if (arg == 1) {
@@ -312,42 +312,69 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
         
                 imageContainer.appendChild(lineDiv);
             }
-        }   
-        
-        let jsonStringUsed = '';
-          
-        // for processing coordination data
-        ipcRenderer.on("coord_process", (event, arg) => {
-            jsonStringUsed = arg;
-            const drawer = new BoundingBoxDrawer(arg, false);
-            drawer.drawBoxAndLine();
-        })
-
-        let minimized = true;
-        // function to change teh size of the image 
-        function changeSizeOfImage(){
-            if (minimized){
-                image_show.style.height = '100vh';
-                imageContainer.style.top = '0';
-                imageContainer.style.left = '0';
-                document.querySelectorAll('.bounding_box, .line, .diagonal-line').forEach(element => element.remove());
-                const drawer = new BoundingBoxDrawer(jsonStringUsed, true);
-                drawer.drawBoxAndLine();
-                minimized = false;
-            } else {
-                image_show.style.height = '50vh';
-                imageContainer.style.top = '13vh';
-                imageContainer.style.left = '4vw';
-                document.querySelectorAll('.bounding_box, .line, .diagonal-line').forEach(element => element.remove());
-                const drawer = new BoundingBoxDrawer(jsonStringUsed, true);
-                drawer.drawBoxAndLine();
-                minimized = true;
-            }
         }
+        
+        // draws bounding boxes
+        // box data format: [{"x":xVal, "y":yVal, "width":width, "height":height, "label":label}, ...]
+        function drawConnectedBoundingBoxes(boxData, flushExisting = true) {
+            if (boxData.length === 0 || boxData.length > 2) return;
+
+            // remove existing boxes if needed
+            if (flushExisting) {
+                document.querySelectorAll('.bounding_box').forEach(element => element.remove());
+                document.querySelectorAll('.diagonal-line').forEach(element => element.remove());
+            }
+
+            let boxMids = []; // store midpoints of boxes
+
+            // draw the boxes and calculate midpoints of each box
+            boxData.forEach(box => {
+                // convert normalized to pixel values
+                box.x = box.x * image_show.width;
+                box.y = box.y * image_show.height;
+                box.width = box.width * image_show.width;
+                box.height = box.height * image_show.height;
+
+                const bboxDiv = document.createElement('div');
+                bboxDiv.classList.add('bounding_box');
+                bboxDiv.style.top = `${box.y}px`;
+                bboxDiv.style.left = `${box.x}px`;
+                bboxDiv.style.width = `${box.width}px`;
+                bboxDiv.style.height = `${box.height}px`;
+    
+                const labelDiv = document.createElement('div');
+                labelDiv.classList.add('bounding_box-label');
+                labelDiv.textContent = box.label;
+                bboxDiv.appendChild(labelDiv);
+    
+                imageContainer.appendChild(bboxDiv);
+
+                boxMids.push({"midX": box.x + box.width / 2, "midY": box.y + box.height / 2});
+            });
+
+            // draw lines between boxes
+            const diagonalDiv = document.createElement('div');
+            diagonalDiv.classList.add('diagonal-line');
+    
+            const length = Math.sqrt((boxMids[1].midX - boxMids[0].midX) ** 2 + (boxMids[1].midY - boxMids[0].midY) ** 2);
+            const angle = Math.atan2(boxMids[1].midY - boxMids[0].midY, boxMids[1].midX - boxMids[0].midX) * (180 / Math.PI);
+    
+            diagonalDiv.style.width = `${length}px`;
+            diagonalDiv.style.transform = `rotate(${angle}deg)`;
+            diagonalDiv.style.left = `${boxMids[0].midX}px`;
+            diagonalDiv.style.top = `${boxMids[0].midY}px`;
+    
+            imageContainer.appendChild(diagonalDiv);
+        }
+                
+        // for processing coordination data
+        ipcRenderer.on("drawBoxAndLine", (event, arg) => {
+            drawConnectedBoundingBoxes(arg);
+        })
 
         // remove all boxes
         ipcRenderer.on("remove_boxes", (event, arg) => {
-            document.querySelectorAll('.bounding_box, .line, .diagonal-line').forEach(element => element.remove());
+            document.querySelectorAll('.bounding_box, .diagonal-line').forEach(element => element.remove());
         })
 
         let alignImageCount = 0;
@@ -470,7 +497,7 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
             ipcRenderer.send("msg_freeform", 1);
         }
         
-        const functions = [terminate_task, interrupt_fn, redofn, btn_click, camerafn, aichatfn, freeformfn, alignImagefn, changeSizeOfImage];
+        const functions = [terminate_task, interrupt_fn, redofn, btn_click, camerafn, aichatfn, freeformfn, alignImagefn];
         
         functions.forEach(func => {
             window[func.name] = func;
