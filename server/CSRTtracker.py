@@ -64,7 +64,7 @@ with mp_hands.Hands(
             return None
         
     while True:
-        data = conn.recv(150000).decode()  # buffer size for image data
+        data = conn.recv(200000).decode()  # buffer size for image data
         if not data:
             continue
         try:

@@ -12,7 +12,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 720,
-    title: "NeuronSpark | GLASS",
+    title: "NeuronSpark | PixelSense",
     frame: true,
     webPreferences: {
       nodeIntegration: true,
@@ -23,16 +23,24 @@ function createWindow() {
 }
 app.whenReady().then(createWindow)
 
+const espIP = '192.168.68.106'; // local IP of esp32
+
+// all websocket and TCP connection ports
+const voiceUIport = 9999;
+const websocketAudioPort = 8080;
+const espPort = 9000;
+const CSRTtrackerPort = 8001;
+
+// voice server for handling audio TTS and STT
 const voiceServer = express();
-const voicePort = 9999; 
 voiceServer.use(express.static('voice'));
-voiceServer.listen(voicePort, () => {
-    console.log(`Voice server url: http://127.0.0.1:${voicePort}/`);
+voiceServer.listen(voiceUIport, () => {
+    console.log(`Voice server url: http://127.0.0.1:${voiceUIport}/`);
 });
+const wsAudio = new WebSocket.Server({ port: websocketAudioPort });
 
-const wsAudio = new WebSocket.Server({ port: 8080 });
-
-const CSRTtracker = net.createConnection({ port: 8001 }, () => {
+// connect with CSRT tracker
+const CSRTtracker = net.createConnection({ port: CSRTtrackerPort }, () => {
   console.log('Connected to Python CSRT tracker');
 });
 
@@ -42,17 +50,56 @@ function restartApp() {
 }
 
 wsAudio.on('connection', audio => {  // check if audio feature is turned on
-  const espWsAddr = 'ws://192.168.68.106:9000';
   win.webContents.send("audio", 1); 
   console.log("sound Enabled");
 
-  let currentMode;
-  const esp_ws = new WebSocket(espWsAddr);  // open websocket
+  let currentMode; // current running mode (freeform, image description, text recognition, coordination and object detection)
+  let trackedObjName = ""; // currently tracked object name
   let currentImageBase64 = null; // variable to store the current image base64 data
 
+  const espWsAddr = `ws://${espIP}:${espPort}`;
+  const esp_ws = new WebSocket(espWsAddr);  // open esp32 websocket
   esp_ws.on('open', () => {   // check if esp32 websocket port is opened
       console.log('ESP32 connected via websocket');
       win.webContents.send("esp_connect", 1);
+  });
+
+  // image handling from esp32
+  let initTries = 5; // number of initial frames to skip for .coord mode (this is to allow the esp32 cam to stabelize the image stream)
+  let APItriggered = false;
+  esp_ws.on('message', (data) => {
+    if(data.includes("$#TXT#$")){
+      data = data.toString().replace("$#TXT#$", "");
+      console.log("From ESP32", data);
+      if(data == "streamingStopped"){
+        // reset variables and UI
+        initTries = 5;
+        APItriggered = false;
+        win.webContents.send("terminate", 1);
+      } else if (data == "touch1_single"){
+        win.webContents.send("ble_trigger", ".txt_rec");
+      } else if (data == "touch2_single"){
+        win.webContents.send("ble_trigger", ".freeform");
+      } else if (data == "touch1_double"){
+        win.webContents.send("ble_trigger", ".coord");
+      } else if (data == "touch2_double"){
+        win.webContents.send("ble_trigger", ".img_des");
+      }
+    } else {
+      currentImageBase64 = data.toString('base64'); // store the image data as base64
+      win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
+      if(currentMode == '.coord'){ // start realtime coordination mode
+        initTries--;
+        if(initTries <= 0){ 
+          if(!APItriggered){
+            APItriggered = true;
+            modeHandler.executeMode(currentMode); // handle the initiation coordination mode(once per stream)
+          }
+        }
+      } else { // handle other modes (non-realtime)
+        modeHandler.executeMode(currentMode); // handle the currentMode that user wants (currentMode var is already set by button click event)
+      }
+    }
   });
 
   class modeExecuter {
@@ -178,6 +225,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
           const y = (initialCoordinate.ymin / 1000) * imageHeight;
           const w = ((initialCoordinate.xmax - initialCoordinate.xmin) / 1000) * imageWidth;
           const h = ((initialCoordinate.ymax - initialCoordinate.ymin) / 1000) * imageHeight;
+          trackedObjName = websocket_event.data; // set the currently tracked object name
 
           // Send as pixel ROI [x, y, width, height] to CSRT tracker
           const rio = [x, y, w, h];
@@ -201,40 +249,11 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
   }
   const modeHandler = new modeExecuter(); // create an instance of modeExecuter class
 
-  // image handling from esp32
-  let initTries = 5; // number of initial frames to skip for .coord mode (this is to allow the esp32 cam to stabelize the image stream)
-  let APItriggered = false;
-  esp_ws.on('message', (data) => {
-    if(typeof data === 'string' && data.includes("$#TXT#$")){
-      data = data.replace("$#TXT#$", "");
-      if(data == "streamingStopped"){
-        // reset variables and UI
-        initTries = 5;
-        APItriggered = false
-        win.webContents.send("terminate", 1);
-      }
-    } else {
-      currentImageBase64 = data.toString('base64'); // store the image data as base64
-      win.webContents.send("update_img", currentImageBase64); // send the image data to renderer
-      if(currentMode == '.coord'){ // start realtime coordination mode
-        initTries--;
-        if(initTries <= 0){ 
-          if(!APItriggered){
-            APItriggered = true;
-            modeHandler.executeMode(currentMode); // handle the initiation coordination mode(once per stream)
-          }
-        }
-      } else { // handle other modes (non-realtime)
-        modeHandler.executeMode(currentMode); // handle the currentMode that user wants (currentMode var is already set by button click event)
-      }
-    }
-  });
-
   // handle data received from python CSRT tracker
   CSRTtracker.on('data', async (data) => {
     const msg = JSON.parse(data.toString());
     
-    win.webContents.send("drawBoxAndLine", [{x: msg.objRIO[0], y: msg.objRIO[1], width: msg.objRIO[2], height: msg.objRIO[3], label: 'Sample Box 1'},{x: msg.handRIO[0], y: msg.handRIO[1], width: msg.handRIO[2], height: msg.handRIO[3], label: 'Sample Box 2'}]);
+    win.webContents.send("drawBoxAndLine", [{x: msg.objRIO[0], y: msg.objRIO[1], width: msg.objRIO[2], height: msg.objRIO[3], label: trackedObjName},{x: msg.handRIO[0], y: msg.handRIO[1], width: msg.handRIO[2], height: msg.handRIO[3], label: 'Hand'}]);
 
     if(msg.init == true){
       const imgJSON = {"imgBase64": currentImageBase64};
@@ -242,7 +261,6 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       return;
     }
   });
-
 
   // function to fetch an image from esp32
   // capture modes: "captureLow", "captureHigh", "startStream"
@@ -257,12 +275,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
   const genAI = new GoogleGenerativeAI(apiKey); // create gemini session 
   
   // gemini configuration
-  const generationConfig = {
-    maxOutputTokens: 4096,
-    temperature: 0.3,
-    topP: 1,
-    topK: 32,
-  };
+  const generationConfig = {maxOutputTokens: 4096, temperature: 0.3, topP: 1, topK: 32};
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" , generationConfig});  // initialize gemini model for normal tasks
   const modelCoord = genAI.getGenerativeModel({ model: "gemini-2.0-flash" , generationConfig});  // initialize gemini model for coordination
 
@@ -282,7 +295,6 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
   // function to run the AI, display text on UI and output speech
   async function run_AI(prompt, currentMode, voice_on) {
     win.webContents.send("remove_boxes", 1);
-    var AI_instruction;
     if (prompt == 0){ // handle if no prompt is provided
         if (currentMode == ".obj_dtc"){
             prompt = 'What are the objects in this image?';
@@ -295,16 +307,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
 
     // select the right instruction for AI
     let instructionKeyIndex = instructions[0].indexOf(currentMode)
-    AI_instruction = instructions[1][instructionKeyIndex];
-
-    // json to combine prompt and AI instruction
-    const promptparts = [
-      {text: ``},
-      {text: "hello"},
-      {text: "output: "},
-    ];
-    promptparts[2].text = prompt;
-    promptparts[1].text = AI_instruction;
+    const AI_instruction = instructions[1][instructionKeyIndex];
 
     // image to send
     const imageParts = [
@@ -316,8 +319,10 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       }
     ];
 
+    const AIquery = [[{text: AI_instruction}, {text: prompt}], ...imageParts];
+
     if (currentMode == ".coord"){
-      const result = await modelCoord.generateContentStream([promptparts, ...imageParts]); // get the output from gemini
+      const result = await modelCoord.generateContentStream(AIquery); // get the output from gemini
       let text = '';  // stores the full-streamed text
       for await (const chunk of result.stream) {  // process each chunk of data from gemini
         const chunkText = await chunk.text();
@@ -327,7 +332,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       let fullJSON = JSON.parse(cleanJsonString);
       return fullJSON;  // return the full JSON object
     } else {
-      const result = await model.generateContentStream([promptparts, ...imageParts]); // get the output from gemini
+      const result = await model.generateContentStream(AIquery); // get the output from gemini
       let text = '';  // stores the full-streamed text
 
       // chunks for text to speech

@@ -121,8 +121,8 @@ void loop() {
   if (measure.RangeStatus != 4) { // phase failures have incorrect data
     int distance =  measure.RangeMilliMeter; 
 
-    if(distance < 80){
-      playTone(4000, true);
+    if(distance < 100){
+      playTone(4000, true); 
     } else {
       playTone(4000, false);
     }
@@ -131,6 +131,15 @@ void loop() {
   }
 
   webSocketServer.loop();
+  if(readTouch(touch1Pin) == true){
+    webSocketServer.broadcastTXT("$#TXT#$touch1_single");
+    playTone(500, true);delay(100);playTone(2000, true);delay(100);playTone(500, false);//play tone
+    delay(500); // ensures no accident press happens
+  } else if(readTouch(touch2Pin) == true){
+    webSocketServer.broadcastTXT("$#TXT#$touch2_single");
+    playTone(2000, true);delay(100);playTone(500, true);delay(100);playTone(500, false);//play tone
+    delay(500); // ensures no accident press happens
+  }
 }
 
 // handles incoming data through websocket
@@ -191,12 +200,12 @@ void streamImage(){
   delay(20);
   camera_fb_t * fb = NULL;
   while(isStreamingStarted){
-    if(readTouchDebounced(touch2Pin) == true){
+    if(readTouch(touch2Pin) == true){
       toggleStreaming(false);
       webSocketServer.broadcastTXT("$#TXT#$streamingStopped");
-      playTone(1000, true);
-      delay(200);
-      playTone(1000, false);
+      playTone(1500, true);
+      delay(100);
+      playTone(1500, false);
       return;
     }
     fb = esp_camera_fb_get();
@@ -229,7 +238,7 @@ void playTone(int freq, bool toggle){
 }
 
 // Reads touch pin with debounce
-bool readTouchDebounced(int pin) {
+bool readTouch(int pin) {
   const int numReadings = 5;  
   int totalScore = 0;     
   for (int i = 0; i < numReadings; i++) {

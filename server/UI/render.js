@@ -10,13 +10,11 @@ const obj_dtc = document.querySelector('.obj_dtc');
 const txt_rec = document.querySelector('.txt_rec');
 const img_des = document.querySelector('.img_des');
 const coord = document.querySelector('.coord');
-const camera = document.querySelector('.camera');
 
 const stop_btn = document.querySelector('.stop');
 const camera_btn = document.querySelector('.camera');
 const un_mute_btn = document.querySelector('.un_mute');
 const interrupt_btn = document.querySelector('.interrupt');
-
 
 const level = document.querySelector('.level');
 const level_text = document.querySelector('.level_text');
@@ -27,61 +25,18 @@ const imageContainer = document.querySelector('.img_container');
 
 const audio_icon = document.getElementById('audio_icon');
 const glass_connect = document.querySelector('.glass_connect span');
-const voltage  = document.querySelector('.voltage');
 
 const alignImageSpan = document.querySelector('.alignImage span');
 
 ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned on
     if (arg == 1) {
-        // event listener for keyboard shortcut events
-        document.addEventListener("keydown", function(event) {
-            var keyCode = event.keyCode;
-            console.log(keyCode);
-        
-            switch(keyCode) {
-                case 87:
-                    ai_chat.click();
-                  break;
-                case 83:
-                    obj_dtc.click();
-                  break;
-                case 68:
-                    img_des.click();
-                break;
-                case 65:
-                    txt_rec.click();
-                break;
-                case 71:
-                    freeform.click();
-                break;
-                case 72:
-                    camera.click();
-                break;
-                case 70:
-                    coord.click();
-                break;
-                case 75:
-                    terminate_task();
-                break;
-                case 76:
-                    ipcRenderer.send("msg", 'restart_app');
-                break;
-                default:
-              }
-          });
-    
+        // indicate audio is on
+        audio_icon.style.color = 'rgba(148, 255, 180, 0.8)';audio_icon.style.textShadow = '0 0px 4px rgba(148, 255, 180, 0.8)';
 
-        // act of voltage change of esp32
-        ipcRenderer.on("voltage_change", (event, arg) => {
-            let has_comma = arg.includes(",");
-            if(has_comma){
-                let formatted_V = arg.split(",");
-                voltage.innerHTML = formatted_V[2] + "V";
-            } else{
-                voltage.innerHTML = arg + "V";
-            }
-        });
-
+        // show any message from main process
+        ipcRenderer.on("back_msg", (event, arg) => {
+            message.innerHTML = marked(arg);
+        })
         // change UI according to esp32's connection status
         ipcRenderer.on("esp_connect", (event, arg) => {
             if(arg == 1){
@@ -92,20 +47,21 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
                 glass_connect.style.textShadow = '0 0px 4px #e83345';
             }
         })
-
-        // act on bluetooth trigger from esp32
+        // act on bluetooth trigger function from esp32
         ipcRenderer.on("ble_trigger", (event, arg) => {
             reset_style();
             document.querySelector(arg).click();
         })
-        // termiate voice
+        // termiates voice and all UI activity
         ipcRenderer.on("terminate", (event, arg) => {
             terminate_task();
         })
-    
-        audio_icon.style.color = 'rgba(148, 255, 180, 0.8)';
-        audio_icon.style.textShadow = '0 0px 4px rgba(148, 255, 180, 0.8)';
-        
+        // update the image on its change
+        ipcRenderer.on("update_img", (event, arg) => {
+            image_show.setAttribute('src', "data:image/png;base64,"+arg);
+            image_show.style.opacity = '1';
+        })
+
         var isFreeform = 0;
         
         // for smooth transition of dynamic island's percentage text
@@ -116,17 +72,6 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
                 }, 15 * (i - start)); 
             }
         }
-        
-        // show any message from main process
-        ipcRenderer.on("back_msg", (event, arg) => {
-            message.innerHTML = marked(arg);
-        })
-        
-        // update the image on its change
-        ipcRenderer.on("update_img", (event, arg) => {
-            image_show.setAttribute('src', "data:image/png;base64,"+arg);
-            image_show.style.opacity = '1';
-        })
         
         // for smooth transition of dynamic island's loading bar
         var y = 0;
@@ -142,7 +87,7 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
             }
         })
         
-        // check for any button click
+        // check for any button click and animate accordingly
         function btn_click(element){
             isFreeform = 0; // not in freeform mode
             setTimeout(() => {
@@ -215,104 +160,6 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
         function camerafn(){
             ipcRenderer.send("msg", '.freeform');
         }
-
-        class BoundingBoxDrawer {
-            constructor(jsonData, filter) {
-                this.jsonData = jsonData;
-                this.boxes = [];
-                this.filter = filter;
-            }
-        
-            drawBoxAndLine() {
-                let boundingBoxesData = this.jsonData;
-                const imageHeight = image_show.height;
-                const imageWidth = image_show.width;
-        
-                boundingBoxesData.box_2d.forEach(boxData => {
-                    const { ymin, ymax, xmin, xmax, label } = boxData;
-        
-                    const top = (ymin / 1000) * imageHeight;
-                    const left = (xmin / 1000) * imageWidth;
-                    const height = ((ymax - ymin) / 1000) * imageHeight;
-                    const width = ((xmax - xmin) / 1000) * imageWidth;
-        
-                    const midX = left + width / 2;
-                    const midY = top + height / 2;
-                    this.boxes.push({ midX, midY });
-        
-                    const bboxDiv = document.createElement('div');
-                    bboxDiv.classList.add('bounding_box');
-                    bboxDiv.style.top = `${top}px`;
-                    bboxDiv.style.left = `${left}px`;
-                    bboxDiv.style.width = `${width}px`;
-                    bboxDiv.style.height = `${height}px`;
-        
-                    const labelDiv = document.createElement('div');
-                    labelDiv.classList.add('bounding_box-label');
-                    labelDiv.textContent = label;
-                    bboxDiv.appendChild(labelDiv);
-        
-                    imageContainer.appendChild(bboxDiv);
-                });
-        
-                for (let i = 0; i < this.boxes.length - 1; i++) {
-                    this.drawPath(this.boxes[i], this.boxes[i + 1]);
-                    this.drawDiagonal(this.boxes[i], this.boxes[i + 1]);
-                }
-            }
-        
-            drawDiagonal(box1, box2) {
-                const { midX: x1, midY: y1 } = box1;
-                const { midX: x2, midY: y2 } = box2;
-        
-                const diagonalDiv = document.createElement('div');
-                diagonalDiv.classList.add('diagonal-line');
-        
-                const length = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
-                const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
-        
-                diagonalDiv.style.width = `${length}px`;
-                diagonalDiv.style.transform = `rotate(${angle}deg)`;
-                diagonalDiv.style.left = `${x1}px`;
-                diagonalDiv.style.top = `${y1}px`;
-        
-                imageContainer.appendChild(diagonalDiv);
-            }
-        
-            drawPath(box1, box2) {
-                const { midX: x1, midY: y1 } = box1;
-                const { midX: x2, midY: y2 } = box2;
-        
-                if (Math.abs(x1 - x2) > Math.abs(y1 - y2)) {
-                    this.drawLine(x1, y1, x2, y1);
-                    this.drawLine(x2, y1, x2, y2);
-                } else {
-                    this.drawLine(x1, y1, x1, y2);
-                    this.drawLine(x1, y2, x2, y2);
-                }
-            }
-        
-            drawLine(xStart, yStart, xEnd, yEnd) {
-                const lineDiv = document.createElement('div');
-                lineDiv.classList.add('line');
-        
-                const width = Math.abs(xEnd - xStart);
-                const height = Math.abs(yEnd - yStart);
-        
-                lineDiv.style.left = `${Math.min(xStart, xEnd)}px`;
-                lineDiv.style.top = `${Math.min(yStart, yEnd)}px`;
-        
-                if (width > height) {
-                    lineDiv.style.width = `${width}px`;
-                    lineDiv.style.height = `2px`;
-                } else {
-                    lineDiv.style.width = `2px`;
-                    lineDiv.style.height = `${height}px`;
-                }
-        
-                imageContainer.appendChild(lineDiv);
-            }
-        }
         
         // draws bounding boxes
         // box data format: [{"x":xVal, "y":yVal, "width":width, "height":height, "label":label}, ...]
@@ -365,6 +212,28 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
             diagonalDiv.style.top = `${boxMids[0].midY}px`;
     
             imageContainer.appendChild(diagonalDiv);
+
+            // determine direction to reach box0 from box1 through words (left-right or up-down or here)
+
+            const xErrorRange = 60; // two points within xErrorRange pixels in x-axis are considered aligned
+            const yErrorRange = 60; // two points within yErrorRange pixels in y-axis are considered aligned
+            let direction = ""; // direction to reach box0 from box1
+
+            let xError = boxMids[1].midX - boxMids[0].midX;
+            let yError = boxMids[1].midY - boxMids[0].midY;
+
+            if(xError > xErrorRange){
+                direction = "left ";
+            } else if (xError < -xErrorRange){
+                direction = "right ";
+            } else if (yError > yErrorRange){
+                direction = "up";
+            } else if (yError < -yErrorRange){
+                direction = "down";
+            } else {
+                direction = "here";
+            }
+            message.innerHTML = direction;
         }
                 
         // for processing coordination data
