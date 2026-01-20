@@ -203,9 +203,8 @@ void streamImage(){
     if(readTouch(touch2Pin) == true){
       toggleStreaming(false);
       webSocketServer.broadcastTXT("$#TXT#$streamingStopped");
-      playTone(1500, true);
-      delay(100);
-      playTone(1500, false);
+      playTone(1000, true);delay(100);playTone(2000, true);delay(100);playTone(500, false);//play tone
+      delay(1500); // ensures no accident press happens
       return;
     }
     fb = esp_camera_fb_get();

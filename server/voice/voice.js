@@ -4,6 +4,24 @@ const synth = window.speechSynthesis;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const textQueue = [];
 
+function loadVoices() {
+  const voices = synth.getVoices();
+
+  voices.forEach((voice, index) => {
+    console.log(
+      `${index}: ${voice.name} | ${voice.lang} | local=${voice.localService}`
+    );
+  });
+}
+
+// Some browsers load voices async
+if (speechSynthesis.onvoiceschanged !== undefined) {
+  speechSynthesis.onvoiceschanged = loadVoices;
+}
+
+// Also call once in case they're already loaded
+loadVoices();
+
 speakButton.addEventListener('click', () => {
   const socket = new WebSocket('ws://localhost:8080');
 
@@ -15,7 +33,7 @@ speakButton.addEventListener('click', () => {
     const nextChunk = textQueue.shift();
     const utterance = new SpeechSynthesisUtterance(nextChunk);
 
-    utterance.voice = synth.getVoices()[16]; 
+    utterance.voice = synth.getVoices()[6]; 
     utterance.rate = 1.2; 
     utterance.pitch = 1; 
 

@@ -111,7 +111,7 @@ with mp_hands.Hands(
                 if frameData.get("reset", False):
                     initialized = False
                     OBJtracker = None
-                    print("Resetting tracker as requested.")
+                    print("Resetting tracker")
                     continue
 
                 newObjRIO = OBJtracker.getObjCoordinate(img)

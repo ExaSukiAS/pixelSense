@@ -1,10 +1,10 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const fs = require("fs");
-const WebSocket = require('ws');
-const net = require('net');
-const express = require('express');
-const { imageSize } = require('image-size');
+import { app, BrowserWindow, ipcMain } from 'electron';
+import { GoogleGenAI } from "@google/genai";
+import fs from "fs";
+import WebSocket, { WebSocketServer } from 'ws';
+import net from 'net';
+import express from 'express';
+import { imageSize } from 'image-size';
 
 // create window
 let win;
@@ -23,7 +23,8 @@ function createWindow() {
 }
 app.whenReady().then(createWindow)
 
-const espIP = '192.168.68.106'; // local IP of esp32
+const keyToUse = "3";
+const espIP = '192.168.68.104'; // local IP of esp32
 
 // all websocket and TCP connection ports
 const voiceUIport = 9999;
@@ -37,12 +38,14 @@ voiceServer.use(express.static('voice'));
 voiceServer.listen(voiceUIport, () => {
     console.log(`Voice server url: http://127.0.0.1:${voiceUIport}/`);
 });
-const wsAudio = new WebSocket.Server({ port: websocketAudioPort });
+const wsAudio = new WebSocketServer({ port: websocketAudioPort });
 
 // connect with CSRT tracker
 const CSRTtracker = net.createConnection({ port: CSRTtrackerPort }, () => {
   console.log('Connected to Python CSRT tracker');
 });
+
+let lastAIrunTime = performance.now();
 
 function restartApp() {
   app.relaunch();
@@ -76,6 +79,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
         initTries = 5;
         APItriggered = false;
         win.webContents.send("terminate", 1);
+        CSRTtracker.write(JSON.stringify({"reset": true})); // reset CSRT tracker
       } else if (data == "touch1_single"){
         win.webContents.send("ble_trigger", ".txt_rec");
       } else if (data == "touch2_single"){
@@ -215,6 +219,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       const messageHandler = async (websocket_event) => {
         win.webContents.send("back_msg", "Getting initial coordinates of hand and " + websocket_event.data + "... ...");
         const initialCoordinate = await run_AI(websocket_event.data, currentMode, false); // get initial coordinates as JSON object from gemini
+        console.log(initialCoordinate);
         if (initialCoordinate) {
           const imageBuffer = Buffer.from(currentImageBase64, 'base64'); // Decode base64 image to buffer
           const { width: imageWidth, height: imageHeight } = imageSize(imageBuffer);// Get image dimensions
@@ -269,15 +274,11 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       esp_ws.send(captureMode); 
     }
   }
-
-  const apiJSON = JSON.parse(fs.readFileSync('geminiAPI.json', 'utf8'));
-  const apiKey = apiJSON.apiKey;
-  const genAI = new GoogleGenerativeAI(apiKey); // create gemini session 
   
-  // gemini configuration
-  const generationConfig = {maxOutputTokens: 4096, temperature: 0.3, topP: 1, topK: 32};
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" , generationConfig});  // initialize gemini model for normal tasks
-  const modelCoord = genAI.getGenerativeModel({ model: "gemini-2.0-flash" , generationConfig});  // initialize gemini model for coordination
+  // gemini initialization
+  const apiKey = JSON.parse(fs.readFileSync('geminiAPI.json'))[keyToUse]; // read gemini API keys from json file
+  const ai = new GoogleGenAI({apiKey: apiKey}); // (api key is fetched from environment variable GOOGLE_API_KEY)
+  console.log("Using Gemini API Key #" + keyToUse);
 
   const instructionFilePath = 'instructions.txt'; // instruction text file path
   let instructionTxt = fs.readFileSync(instructionFilePath, 'utf8');    // read the instruction file
@@ -294,6 +295,12 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
 
   // function to run the AI, display text on UI and output speech
   async function run_AI(prompt, currentMode, voice_on) {
+    const now = performance.now();
+    if (now - lastAIrunTime < 5000) { // enforce a 5-second cooldown between AI calls
+      const waitTime = 5000 - (now - lastAIrunTime);
+      console.log(`Please wait ${Math.ceil(waitTime / 1000)} more seconds before making another request.`);
+      return;
+    }
     win.webContents.send("remove_boxes", 1);
     if (prompt == 0){ // handle if no prompt is provided
         if (currentMode == ".obj_dtc"){
@@ -309,43 +316,60 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
     let instructionKeyIndex = instructions[0].indexOf(currentMode)
     const AI_instruction = instructions[1][instructionKeyIndex];
 
-    // image to send
-    const imageParts = [
+    const AIquery = [
       {
         inlineData: {
           data: currentImageBase64,
           mimeType: "image/jpeg"
         }
-      }
+      },
+      { text: prompt },
     ];
 
-    const AIquery = [[{text: AI_instruction}, {text: prompt}], ...imageParts];
+    function sanitizeForTTS(text) {
+      return text
+      // Remove markdown formatting
+      .replace(/[`*_~^#>|]/g, '')
+
+      // Remove emojis & symbols
+      .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '')
+
+      // Remove standalone symbols
+      .replace(/[^\p{L}\p{N}\s.,!?'"():;-]/gu, '')
+    }
+
 
     if (currentMode == ".coord"){
-      const result = await modelCoord.generateContentStream(AIquery); // get the output from gemini
+      const response = await ai.models.generateContentStream({model: "gemini-2.5-flash", contents: AIquery, config:{systemInstruction: AI_instruction}}); // get the output from gemini
       let text = '';  // stores the full-streamed text
-      for await (const chunk of result.stream) {  // process each chunk of data from gemini
-        const chunkText = await chunk.text();
+      for await (const chunk of response) {  // process each chunk of data from gemini
+        const chunkText = chunk.text;
         text += chunkText;
       }
       let cleanJsonString = text.replace(/^```json\n/, '').replace(/```$/, '');    //filter the string
       let fullJSON = JSON.parse(cleanJsonString);
+      lastAIrunTime = performance.now();
       return fullJSON;  // return the full JSON object
     } else {
-      const result = await model.generateContentStream(AIquery); // get the output from gemini
+      const response = await ai.models.generateContentStream({model: "gemini-2.5-flash", contents: AIquery, config:{systemInstruction: AI_instruction}}); // get the output from gemini
       let text = '';  // stores the full-streamed text
 
       // chunks for text to speech
       let chunk_array = [];
       let chunk_size = 2;
-      for await (const chunk of result.stream) {  // process each chunk of data from gemini
-        const chunkText = await chunk.text();
+      for await (const chunk of response) {  // process each chunk of data from gemini
+        const chunkText = chunk.text;
         chunk_array.push(chunkText);
         text += chunkText;
         win.webContents.send("back_msg", text);
         if(chunk_array.length >= chunk_size){
           if(voice_on){
-            audio.send(chunk_array[0] + chunk_array[1]); // say the chunk as voice
+            const rawText = chunk_array[0] + chunk_array[1];
+            const cleanText = sanitizeForTTS(rawText);
+
+            if (cleanText.length > 0) {
+              audio.send(cleanText);
+            }
           }
           chunk_array.length = 0;
         }
@@ -358,6 +382,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       chunk_array.length = 0;
       text = '';
     }
+    lastAIrunTime = performance.now();
   }
 
   // check for any user event from renderer
