@@ -23,7 +23,7 @@ function createWindow() {
 }
 app.whenReady().then(createWindow)
 
-const keyToUse = "3";
+const keyToUse = "4";
 const espIP = '192.168.68.104'; // local IP of esp32
 
 // all websocket and TCP connection ports
@@ -351,7 +351,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       lastAIrunTime = performance.now();
       return fullJSON;  // return the full JSON object
     } else {
-      const response = await ai.models.generateContentStream({model: "gemini-2.5-flash", contents: AIquery, config:{systemInstruction: AI_instruction}}); // get the output from gemini
+      const response = await ai.models.generateContentStream({model: "gemini-2.5-flash-lite", contents: AIquery, config:{systemInstruction: AI_instruction}}); // get the output from gemini
       let text = '';  // stores the full-streamed text
 
       // chunks for text to speech
@@ -420,6 +420,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
       requestCapture("startStream");
     } else if (arg === 'stabelize_off'){
       currentMode = 'stabelize_off';
+      requestCapture("stopStream");
     } else if (arg === 'stop_speech'){
       audio.send('tts_stop');
     } else if (arg == 'restart_app'){

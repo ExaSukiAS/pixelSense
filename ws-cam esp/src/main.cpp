@@ -40,9 +40,9 @@ int touch2Pin = 4;
 
 // Camera parameters
 #define FRAME_SIZE_LOW  FRAMESIZE_VGA
-#define FRAME_SIZE_HIGH FRAMESIZE_UXGA
+#define FRAME_SIZE_HIGH FRAMESIZE_SXGA
 #define JPEG_QUALITY    20
-#define FB_COUNT        4   
+#define FB_COUNT        2  
 
 // Laser sensor object
 #define SEALEVELPRESSURE_HPA (1013.25)
@@ -64,6 +64,7 @@ unsigned long lastDistanceReadTime = 0;
 camera_config_t config; // global camera configuration
 camera_fb_t *latestFb = NULL; // latest frame buffer for streaming
 bool frameReady = false; // flag to indicate a new frame is ready
+char currentRes = 'l'; // current resolution setting
 
 // Camera init with safe XCLK + params
 void setupCamera() {
@@ -87,7 +88,7 @@ void setupCamera() {
   config.pin_reset    = RESET_GPIO_NUM;
 
   // SAFE XCLK: 20 MHz with CLKRC doubling tweak
-  config.xclk_freq_hz = 37000000;
+  config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
   config.frame_size = FRAME_SIZE_LOW;
@@ -106,15 +107,6 @@ void setupCamera() {
   if (s) {
     s->set_framesize(s, FRAME_SIZE_LOW);
     s->set_quality(s, JPEG_QUALITY);
-
-    // Try to enable internal clock doubler via CLKRC (reg 0x11 = 0x80)
-    // This increases internal pixel timing and can raise FPS for smaller resolutions.
-    // We already use XCLK = 20MHz; the sensor will double internally if this succeeds.
-    if (s->set_reg(s, 0x11, 0xFF, 0x80) == 0) {
-      Serial.println("INFO: Applied CLKRC (0x11=0x80) high-FPS register tweak.");
-    } else {
-      Serial.println("WARNING: Failed to apply CLKRC high-FPS tweak.");
-    }
   }
 }
 
@@ -130,6 +122,24 @@ void sendImage() {
   }
   webSocketServer.broadcastBIN(fb->buf, fb->len);
   esp_camera_fb_return(fb);
+}
+
+// changes resolution
+void setResolution(char res){
+  sensor_t *s = esp_camera_sensor_get();
+  if(res == 'l'){
+    s->set_framesize(s, FRAME_SIZE_LOW);
+  } else {
+    s->set_framesize(s, FRAME_SIZE_HIGH);
+  }
+
+  // Discard first few dark frames
+  for (int i = 0; i < 3; i++) {
+    camera_fb_t *tmp = esp_camera_fb_get();
+    if (tmp) esp_camera_fb_return(tmp);
+    delay(50);
+  }
+  currentRes = res;
 }
 
 // toggles image streaming state
@@ -149,14 +159,19 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   switch (type) {
     case WStype_TEXT:
       if (String((char*)payload) == "captureHigh") {
-        config.frame_size = FRAME_SIZE_HIGH;
-        delay(20);
+        if(currentRes != 'h'){
+          setResolution('h');
+        }
         sendImage();
       } else if (String((char*)payload) == "captureLow"){
-        config.frame_size = FRAME_SIZE_LOW;
-        delay(20);
+        if(currentRes != 'l'){
+          setResolution('l');
+        }
         sendImage();
       } else if (String((char*)payload) == "startStream"){
+        if(currentRes != 'l'){
+          setResolution('l');
+        }
         toggleStreaming(true);
       } else if (String((char*)payload) == "stopStream"){
         toggleStreaming(false);
