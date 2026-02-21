@@ -19,14 +19,14 @@ function createWindow() {
       contextIsolation: false
     },
   });
-  win.loadFile("./UI/render.html");
+  win.loadFile("./UI/render.html") ;
 }
 app.whenReady().then(createWindow)
 
 const keyToUse = "4";
-const espIP = '192.168.68.104'; // local IP of esp32
+const espIP = '10.96.177.150'; // local IP of esp32
 
-// all websocket and TCP connection ports
+// all websocket and TCP connection port
 const voiceUIport = 9999;
 const websocketAudioPort = 8080;
 const espPort = 9000;

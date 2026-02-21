@@ -9,7 +9,7 @@
 #include "soc/rtc_cntl_reg.h" 
 
 // Wifi credentials
-const char* ssid = "Amartya";
+const char* ssid = "NeuronSpark";
 const char* password = "amartya@@2020";
 
 // defining camera pins

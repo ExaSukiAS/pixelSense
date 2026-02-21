@@ -1,0 +1,25 @@
+RIOs are in 0-1000 scale:
+bottle1:
+    const initialCoordinate = {
+        "xmin": 384,
+        "xmax": 486,
+        "ymin": 100,
+        "ymax": 691,
+        "label": "object"
+    };
+bottle2:
+    const initialCoordinate = {
+        "xmin": 419,
+        "xmax": 502,
+        "ymin": 304,
+        "ymax": 826,
+        "label": "object"
+    };
+screwdriver:
+    const initialCoordinate = {
+        "xmin": 353,
+        "xmax": 539,
+        "ymin": 443,
+        "ymax": 562,
+        "label": "object"
+    };
