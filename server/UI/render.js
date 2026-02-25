@@ -176,6 +176,14 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
 
             // draw the boxes and calculate midpoints of each box
             boxData.forEach(box => {
+                if(box.x == 0 && box.y == 0 && box.width == 0 && box.height == 0){
+                    if(box.label == "Hand"){
+                        message.innerHTML = "Hand out of frame";
+                    } else {
+                        message.innerHTML = "Object out of frame";
+                    }
+                    return;
+                }
                 // convert normalized to pixel values
                 box.x = box.x * image_show.width;
                 box.y = box.y * image_show.height;
@@ -277,7 +285,7 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
         });
         
         function terminate_task(){
-            ipcRenderer.send("msg", 'stop_speech');
+            ipcRenderer.send("msg", 'terminate_task');
             isFreeform = 0;
             y = 0;
             setTimeout(() => {
@@ -373,5 +381,3 @@ ipcRenderer.on("audio", (event, arg) => {   // check if audio feature is turned 
         });
     }
 });
-
-

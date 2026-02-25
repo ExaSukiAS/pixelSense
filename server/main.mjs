@@ -23,14 +23,14 @@ function createWindow() {
 }
 app.whenReady().then(createWindow)
 
-const keyToUse = "4";
-const espIP = '10.96.177.150'; // local IP of esp32
+const keyToUse = "8";
+const espIP = '192.168.68.104'; // local IP of esp32
 
 // all websocket and TCP connection port
 const voiceUIport = 9999;
 const websocketAudioPort = 8080;
 const espPort = 9000;
-const CSRTtrackerPort = 8001;
+const VitTrackerPort = 8001;
 
 // voice server for handling audio TTS and STT
 const voiceServer = express();
@@ -40,12 +40,13 @@ voiceServer.listen(voiceUIport, () => {
 });
 const wsAudio = new WebSocketServer({ port: websocketAudioPort });
 
-// connect with CSRT tracker
-const CSRTtracker = net.createConnection({ port: CSRTtrackerPort }, () => {
-  console.log('Connected to Python CSRT tracker');
+// connect with Vit tracker
+const VitTracker = net.createConnection({ port: VitTrackerPort }, () => {
+  console.log('Connected to Python Vit tracker');
 });
 
-let lastAIrunTime = performance.now();
+let lastAIrunTime = performance.now(); // variable to store the last time the AI was run, used for cooldown mechanism
+let resetVitTracker = false; // variable to indicate whether the Vit tracker needs to be reset
 
 function restartApp() {
   app.relaunch();
@@ -79,7 +80,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
         initTries = 5;
         APItriggered = false;
         win.webContents.send("terminate", 1);
-        CSRTtracker.write(JSON.stringify({"reset": true})); // reset CSRT tracker
+        VitTracker.write(JSON.stringify({"reset": true})+"\n"); // reset Vit tracker
       } else if (data == "touch1_single"){
         win.webContents.send("ble_trigger", ".txt_rec");
       } else if (data == "touch2_single"){
@@ -232,10 +233,10 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
           const h = ((initialCoordinate.ymax - initialCoordinate.ymin) / 1000) * imageHeight;
           trackedObjName = websocket_event.data; // set the currently tracked object name
 
-          // Send as pixel ROI [x, y, width, height] to CSRT tracker
+          // Send as pixel ROI [x, y, width, height] to Vit tracker
           const rio = [x, y, w, h];
           const imgJSON = {"imgBase64": currentImageBase64, "objRIO": rio};
-          CSRTtracker.write(JSON.stringify(imgJSON));
+          VitTracker.write(JSON.stringify(imgJSON)+"\n");
         }
 
         win.webContents.send("level_indicate", 100);
@@ -254,18 +255,44 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
   }
   const modeHandler = new modeExecuter(); // create an instance of modeExecuter class
 
-  // handle data received from python CSRT tracker
-  CSRTtracker.on('data', async (data) => {
-    const msg = JSON.parse(data.toString());
-    
-    win.webContents.send("drawBoxAndLine", [{x: msg.objRIO[0], y: msg.objRIO[1], width: msg.objRIO[2], height: msg.objRIO[3], label: trackedObjName},{x: msg.handRIO[0], y: msg.handRIO[1], width: msg.handRIO[2], height: msg.handRIO[3], label: 'Hand'}]);
+  let dataBuffer = ""; // Accumulator for incoming chunks from python Vit tracker
+  VitTracker.on('data', async (data) => {
+    dataBuffer += data.toString();
+    try {
+        while (dataBuffer.includes('\n')) {
+            // Find the boundary based on the newline character Python now sends
+            let boundary = dataBuffer.indexOf('\n'); 
+            const completeMsg = dataBuffer.slice(0, boundary); // Get string up to \n
+            dataBuffer = dataBuffer.slice(boundary + 1); // Remove processed part
 
-    if(msg.init == true){
-      const imgJSON = {"imgBase64": currentImageBase64};
-      CSRTtracker.write(JSON.stringify(imgJSON));
-      return;
+            if (completeMsg.trim() === "") continue;
+
+            const msg = JSON.parse(completeMsg);
+            console.log("Received from VitTracker:", msg);
+
+            handleVitTrackerMessage(msg); 
+        }
+    } catch (err) {
+        console.error("JSON Parse Error in Node.js:", err);
     }
   });
+  function handleVitTrackerMessage(msg) {
+    // send next frame 
+    if(msg.init == true){
+      if(!resetVitTracker){
+        win.webContents.send("drawBoxAndLine", [{x: msg.objRIO[0], y: msg.objRIO[1], width: msg.objRIO[2], height: msg.objRIO[3], label: trackedObjName},{x: msg.handRIO[0], y: msg.handRIO[1], width: msg.handRIO[2], height: msg.handRIO[3], label: 'Hand'}]);
+        const imgJSON = {"imgBase64": currentImageBase64};
+        VitTracker.write(JSON.stringify(imgJSON)+"\n");
+      } else {
+        VitTracker.write(JSON.stringify({"reset": true})+"\n"); // reset Vit tracker
+        resetVitTracker = false; // reset the flag after skipping one frame
+      }
+      return;
+    } else if (msg.init == false){
+      win.webContents.send("remove_boxes", 1);
+      return;
+    }
+  }
 
   // function to fetch an image from esp32
   // capture modes: "captureLow", "captureHigh", "startStream"
@@ -346,7 +373,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
         const chunkText = chunk.text;
         text += chunkText;
       }
-      let cleanJsonString = text.replace(/^```json\n/, '').replace(/```$/, '');    //filter the string
+      let cleanJsonString = text.replace(/^```json\n/, '').replace(/```$/, ''); //filter the string
       let fullJSON = JSON.parse(cleanJsonString);
       lastAIrunTime = performance.now();
       return fullJSON;  // return the full JSON object
@@ -385,6 +412,7 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
     lastAIrunTime = performance.now();
   }
 
+  let prevArg;
   // check for any user event from renderer
   ipcMain.on("msg", (event, arg) => {
     if (arg === '.txt_rec'){
@@ -421,10 +449,16 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
     } else if (arg === 'stabelize_off'){
       currentMode = 'stabelize_off';
       requestCapture("stopStream");
-    } else if (arg === 'stop_speech'){
-      audio.send('tts_stop');
+    } else if (arg === 'terminate_task'){
+      if(prevArg === '.coord'){
+        requestCapture("stopStream");
+        resetVitTracker = true; // set the reset flag to true to reset the Vit tracker when the next message is received from it
+      } else {
+        audio.send('tts_stop');
+      }
     } else if (arg == 'restart_app'){
       restartApp();
     }
+    prevArg = arg;
   });  
 });

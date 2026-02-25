@@ -28,6 +28,8 @@ confidenceThreshold = 0.5 # minimum confidence score to consider tracking succes
 trackerModelPath = os.path.join(os.path.dirname(__file__), "object_tracking_vittrack_2023sep.onnx") # vitTracker ONNX model path
 useRecovery = False # whether to use recovery mechanism when tracking fails
 
+showTrackingWindow = False # set to False to disable OpenCV window (for headless environments)
+
 class VitTracker:
     def __init__(self, firstFrame, roi, minConfidence, useRecovery, modelPath):
         params = cv2.TrackerVit_Params()
@@ -102,22 +104,31 @@ with mp_hands.Hands(
             print(f"Error: {e}")
             break
 
+        frameData = None # reset frameData for each loop, will be set if we successfully parse a new message
+
         # Check if we have a full message (\n indicates end of a full message)
         if "\n" in buffer:
             lines = buffer.split("\n")
-            # Process all complete lines, keep the last (potentially partial) line in buffer
-            buffer = lines.pop() 
+            buffer = lines.pop() # Process all complete lines, keep the last (potentially partial) line in buffer
 
-            for line in lines:
-                if not line.strip():
-                    continue
+            # Grab the latest complete line (newest frame) and parse it as JSON
+            valid_lines = [line for line in lines if line.strip()]
+            if valid_lines:
+                latest_line = valid_lines[-1] # Grab only the newest frame
                 try:
-                    frameData = json.loads(line)
+                    frameData = json.loads(latest_line)
                 except json.JSONDecodeError:
                     print(colored("Error decoding JSON: Message was incomplete.", "red"))
-                    continue
 
         if frameData:
+            # check for reset command
+            if frameData.get("reset", False):
+                initialized = False
+                OBJtracker = None
+                print(colored("Received reset command. Tracker has been reset.", "yellow"))
+                conn.send((json.dumps({"init": False, "objRIO": [], "handRIO": []}) + "\n").encode())
+                continue
+            
             # decode base64 string into OpenCV image
             base64String = frameData.get("imgBase64")
             if not base64String:
@@ -127,12 +138,13 @@ with mp_hands.Hands(
             image_bytes = base64.b64decode(base64String)
             nparr = np.frombuffer(image_bytes, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR) # BGR format
-            imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # RGB format
-            imgHeight, imgWidth, _ = img.shape # image dimensions
 
             if img is None:
                 print("Error decoding image.")
                 continue
+
+            imgRGB = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # RGB format
+            imgHeight, imgWidth, _ = img.shape # image dimensions
             
             if not initialized:
                 objRIO = frameData.get("objRIO")
@@ -144,41 +156,37 @@ with mp_hands.Hands(
                 OBJtracker = VitTracker(img, objRIO, confidenceThreshold, useRecovery, trackerModelPath)
                 initialized = True
                 print("initialized vitTracker with rio:", objRIO)
-                conn.send(json.dumps({"init": True, "objRIO": [], "handRIO": []}).encode())
+                conn.send((json.dumps({"init": True, "objRIO": [], "handRIO": []}) + "\n").encode())
                 
-                (ox, oy, ow, oh) = map(int, frameData.get("objRIO", objRIO))
-                cv2.rectangle(img, (ox, oy), (ox + ow, oy + oh), (0, 0, 255), 2)
+                if showTrackingWindow:
+                    # show initialized frame RIO
+                    (ox, oy, ow, oh) = map(int, frameData.get("objRIO", objRIO))
+                    cv2.rectangle(img, (ox, oy), (ox + ow, oy + oh), (0, 0, 255), 2)
             else:
-                
-                # check for reset command
-                if frameData.get("reset", False):
-                    initialized = False
-                    OBJtracker = None
-                    print("Resetting tracker")
-                    continue
 
                 newObjRIO = OBJtracker.getObjCoordinate(img)
-                #newHandRIO = getHandCoordinates(imgRGB, imgWidth, imgHeight)
-                newHandRIO = [0, 0, 0, 0] # for testing without hand tracking
+                newHandRIO = getHandCoordinates(imgRGB, imgWidth, imgHeight)
 
                 # convert rio to normalized format
                 normObjRIO = [newObjRIO[0] / imgWidth, newObjRIO[1] / imgHeight, newObjRIO[2] / imgWidth, newObjRIO[3] / imgHeight] if newObjRIO else [0, 0, 0, 0]
                 normHandRIO = [newHandRIO[0] / imgWidth, newHandRIO[1] / imgHeight, newHandRIO[2] / imgWidth, newHandRIO[3] / imgHeight] if newHandRIO else [0, 0, 0, 0]
-                conn.send(json.dumps({"init": True, "objRIO": normObjRIO, "handRIO": normHandRIO}).encode())
+                conn.send((json.dumps({"init": True, "objRIO": normObjRIO, "handRIO": normHandRIO}) + "\n").encode())
                 
-                if newObjRIO and newHandRIO:
-                    # show predicted ROI of object
-                    (ox, oy, ow, oh) = map(int, frameData.get("objRIO", newObjRIO))
-                    cv2.rectangle(img, (ox, oy), (ox + ow, oy + oh), (0, 0, 255), 2)
-                    # show hand RIO
-                    (hx, hy, hw, hh) = map(int, newHandRIO)
-                    cv2.rectangle(img, (hx, hy), (hx + hw, hy + hh), (255, 0, 0), 2)
+                if showTrackingWindow:
+                    if newObjRIO and newHandRIO:
+                        # show predicted ROI of object
+                        (ox, oy, ow, oh) = map(int, frameData.get("objRIO", newObjRIO))
+                        cv2.rectangle(img, (ox, oy), (ox + ow, oy + oh), (0, 0, 255), 2)
+                        # show hand RIO
+                        (hx, hy, hw, hh) = map(int, newHandRIO)
+                        cv2.rectangle(img, (hx, hy), (hx + hw, hy + hh), (255, 0, 0), 2)
 
-            # --- Show the image window ---
-            scale = 0.5
-            display_img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
-            cv2.imshow("Tracking", display_img)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            if showTrackingWindow:
+                # --- Show the image window ---
+                scale = 0.5
+                display_img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+                cv2.imshow("Tracking", display_img)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 conn.close()
 server.close()

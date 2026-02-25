@@ -4,12 +4,12 @@
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
 #include "fb_gfx.h"
-// Optional, to disable brownout detector
+// to disable brownout detector
 #include "soc/soc.h" 
 #include "soc/rtc_cntl_reg.h" 
 
 // Wifi credentials
-const char* ssid = "NeuronSpark";
+const char* ssid = "Amartya";
 const char* password = "amartya@@2020";
 
 // defining camera pins
@@ -48,6 +48,13 @@ int touch2Pin = 4;
 #define SEALEVELPRESSURE_HPA (1013.25)
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
+// laser distance sensor variables
+unsigned long lastRequestTime = 0;
+const unsigned long sampleInterval = 50; 
+bool waitingForReading = false; // flag to indicate if we're waiting for a sensor reading to be sent before taking another reading
+const int alertDistance = 100; // distance threshold in mm for alert
+bool distanceSensorBooted = false;
+
 // Websocket server (port 9000)
 int wsPort = 9000;
 WebSocketsServer webSocketServer(wsPort);
@@ -57,9 +64,6 @@ bool isStreamingStarted = false; // flag for image streaming state
 // speaker variables
 bool prevToggle = false;
 int prevFreq = 0;
-
-// distance sensor variables
-unsigned long lastDistanceReadTime = 0;
 
 camera_config_t config; // global camera configuration
 camera_fb_t *latestFb = NULL; // latest frame buffer for streaming
@@ -215,25 +219,91 @@ void playTone(int freq, bool toggle){
     return;
   }
   if(toggle){
-    ledcWriteTone(speakerPin, freq);
+    ledcWriteTone(0, freq);
   } else {
-    ledcWrite(speakerPin, 0);
+    ledcWrite(0, 0);
   }
   prevToggle = toggle; 
   prevFreq = freq;
 }
 
-// Reads touch sensors with debounce
-bool readTouch(int pin) {
-    const int numReadings = 5;  
-    int totalScore = 0;     
-    for (int i = 0; i < numReadings; i++) {
-        totalScore += digitalRead(pin);
-    }
-    float score = 1 - (totalScore / (float)numReadings);  
+// Touch sensor class with single tap, double tap and hold detection
+class TouchSensor{
+  private:
+    int pin;
+    unsigned long lastChangeTime = 0;
+    unsigned long touchStart = 0;
+    unsigned long lastTapTime = 0;      // time of last release
+    unsigned long pendingTapTime = 0;   // time we started waiting for a possible double-tap
+    bool lastTouched = false;
+    bool pendingSingleTap = false;
 
-    return (score > 0.5); // Return true if the score is above threshold (considered pressed)
-}
+    const unsigned long doubleTapWindow = 300; 
+    const unsigned long holdWindow = 500;     
+  public:
+    // constructor to initialize touch sensor pin
+    TouchSensor(int touchPin) {
+      pinMode(touchPin, INPUT_PULLUP);
+      pin = touchPin;
+    }
+
+    // Reads touch sensors
+    bool readTouch() {
+        // Read the touch sensor multiple times to get a more stable reading
+        const int numReadings = 5;  
+        int totalScore = 0;     
+        for (int i = 0; i < numReadings; i++) {
+            totalScore += digitalRead(pin);
+        }
+        float score = 1 - (totalScore / (float)numReadings);  
+
+        return (score > 0.7); // Return true if the score is above threshold (considered pressed)
+    }
+
+    // Call frequently from loop(). Returns:
+    // 0 = no event
+    // 1 = single tap (emitted after doubleTapWindow expires without second tap)
+    // 2 = double tap
+    // 3 = hold (touch lasted >= holdWindow)
+    int getTouchState() {
+      unsigned long now = millis();
+      bool touched = readTouch();
+
+      // detect state changes
+      if (touched != lastTouched) {
+        lastChangeTime = now;
+        if (touched) {
+          touchStart = now; // touch started
+        } else {
+          if (pendingSingleTap && (now - pendingTapTime) <= doubleTapWindow) { // double tap detection
+            pendingSingleTap = false;
+            lastTouched = touched;
+            return 2;
+          } else {
+            pendingSingleTap = true;
+            pendingTapTime = now;
+          }
+        }
+      } else if (touched && (now - touchStart) >= holdWindow) { // hold detection
+        lastTouched = false;
+        pendingSingleTap = false;
+        return 3;
+      }
+
+      if (pendingSingleTap && (now - pendingTapTime) > doubleTapWindow) { // single tap detection
+        pendingSingleTap = false;
+        lastTouched = touched;
+        return 1;
+      }
+
+      lastTouched = touched;
+      return 0;
+    }
+};
+
+// touch sensor objects
+TouchSensor touch1(touch1Pin);
+TouchSensor touch2(touch2Pin);
 
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // Turn-off the brownout detector
@@ -243,8 +313,6 @@ void setup() {
     ledcSetup(0, 50, 8);
     ledcAttachPin(speakerPin, 0); // speaker pin
     pinMode(onBoardLedPin, OUTPUT);
-    pinMode(touch1Pin, INPUT);
-    pinMode(touch2Pin, INPUT);
     Wire.begin(laserSensorSDA, laserSensorSCL); // attach laser sensor
 
     setupCamera(); // initialize camera
@@ -255,9 +323,14 @@ void setup() {
     Serial.print("ws://");Serial.print(WiFi.localIP());Serial.print(":");Serial.println(wsPort);
 
     // initialize laser distance sensor
-    if(!lox.begin()){
-        Serial.println("Failed to boot VL53L0X");
-        while(1);
+    if(lox.begin()){
+      distanceSensorBooted = true;
+    } else {
+      // play error tone if sensor fails to boot
+      playTone(2000, true); delay(600);
+      playTone(2000, false); delay(600);
+      playTone(2000, true); delay(600);
+      playTone(2000, false); 
     }
 
     webSocketServer.begin();
@@ -273,6 +346,15 @@ void setup() {
 }
 
 void loop() {
+    // request distance reading at regular intervals
+    unsigned long now = millis();
+    if (!waitingForReading && now - lastRequestTime >= sampleInterval && distanceSensorBooted) {
+      if (lox.startRange()) {      // non-blocking start
+        lastRequestTime = now;
+        waitingForReading = true;
+      }
+    }
+
     // handle websocket events
     webSocketServer.loop();
     if(frameReady){
@@ -281,26 +363,69 @@ void loop() {
         frameReady = false;
     }
 
-    VL53L0X_RangingMeasurementData_t measure;
-    lox.rangingTest(&measure, false);
-    if (measure.RangeStatus != 4) { // phase failures have incorrect data
-        int distance =  measure.RangeMilliMeter; 
-        if(distance < 100){
-          playTone(4000, true); 
-        } else {
-          playTone(4000, false);
+    // check if range is ready (non-blocking check)
+    if (waitingForReading && lox.isRangeComplete() && distanceSensorBooted) {
+      uint16_t dist_mm = lox.readRangeResult(); // last completed measurement
+      waitingForReading = false;
+
+      if (dist_mm > 0 && dist_mm < alertDistance) {
+        int freq;
+        switch(dist_mm) {
+          case 0 ... 40:
+            freq = 4000;
+            break;
+          case 41 ... 60:
+            freq = 2000;
+            break;
+          case 61 ... 80:
+            freq = 1000;
+            break;
+          default:
+            freq = 500;
         }
-    } else {
+        playTone(freq, true);
+      } else {
         playTone(4000, false);
+      }
     }
 
-    if(readTouch(touch1Pin) == true){
+    // read touch sensors and emit events
+    int touch1State = touch1.getTouchState();
+    int touch2State = touch2.getTouchState();
+
+    switch(touch1State){
+      case 1: // single tap
         webSocketServer.broadcastTXT("$#TXT#$touch1_single");
-        playTone(500, true);delay(100);playTone(2000, true);delay(100);playTone(500, false);//play tone
-        delay(500); // ensures no accident press happens
-    } else if(readTouch(touch2Pin) == true){
+        playTone(500, true); delay(100); playTone(2000, true); delay(100); playTone(500, false);
+        delay(500); // debounce delay
+        break;
+      case 2: // double tap
+        webSocketServer.broadcastTXT("$#TXT#$touch1_double");
+        playTone(1000, true); delay(100); playTone(3000, true); delay(100); playTone(1000, false);
+        delay(500); // debounce delay
+        break;
+      case 3: // hold
+        webSocketServer.broadcastTXT("$#TXT#$touch1_hold");
+        playTone(1500, true); delay(300); playTone(1500, false);
+        delay(500); // debounce delay
+        break;
+    }
+
+    switch(touch2State){
+      case 1: // single tap
         webSocketServer.broadcastTXT("$#TXT#$touch2_single");
-        playTone(2000, true);delay(100);playTone(500, true);delay(100);playTone(500, false);//play tone
-        delay(500); // ensures no accident press happens
+        playTone(2000, true); delay(100); playTone(500, true); delay(100); playTone(500, false);
+        delay(500); // debounce delay
+        break;
+      case 2: // double tap
+        webSocketServer.broadcastTXT("$#TXT#$touch2_double");
+        playTone(3000, true); delay(100); playTone(1000, true); delay(100); playTone(1000, false);
+        delay(500); // debounce delay
+        break;
+      case 3: // hold
+        webSocketServer.broadcastTXT("$#TXT#$touch2_hold");
+        playTone(2500, true); delay(300); playTone(2500, false);
+        delay(500); // debounce delay
+        break;
     }
 }
