@@ -24,13 +24,13 @@ function createWindow() {
 app.whenReady().then(createWindow)
 
 const keyToUse = "8";
-const espIP = '192.168.68.104'; // local IP of esp32
+const espHostName = "pixelsense_esp.local";
 
 // all websocket and TCP connection port
 const voiceUIport = 9999;
 const websocketAudioPort = 8080;
-const espPort = 9000;
 const VitTrackerPort = 8001;
+const esp32CamPort = 9000;
 
 // voice server for handling audio TTS and STT
 const voiceServer = express();
@@ -61,8 +61,8 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
   let trackedObjName = ""; // currently tracked object name
   let currentImageBase64 = null; // variable to store the current image base64 data
 
-  const espWsAddr = `ws://${espIP}:${espPort}`;
-  const esp_ws = new WebSocket(espWsAddr);  // open esp32 websocket
+  const espWsAddress = `ws://${espHostName}:${esp32CamPort}`;
+  const esp_ws = new WebSocket(espWsAddress);  // open esp32 websocket
   esp_ws.on('open', () => {   // check if esp32 websocket port is opened
       console.log('ESP32 connected via websocket');
       win.webContents.send("esp_connect", 1);
@@ -75,20 +75,29 @@ wsAudio.on('connection', audio => {  // check if audio feature is turned on
     if(data.includes("$#TXT#$")){
       data = data.toString().replace("$#TXT#$", "");
       console.log("From ESP32", data);
-      if(data == "streamingStopped"){
-        // reset variables and UI
-        initTries = 5;
-        APItriggered = false;
-        win.webContents.send("terminate", 1);
-        VitTracker.write(JSON.stringify({"reset": true})+"\n"); // reset Vit tracker
-      } else if (data == "touch1_single"){
-        win.webContents.send("ble_trigger", ".txt_rec");
-      } else if (data == "touch2_single"){
-        win.webContents.send("ble_trigger", ".freeform");
-      } else if (data == "touch1_double"){
-        win.webContents.send("ble_trigger", ".coord");
-      } else if (data == "touch2_double"){
-        win.webContents.send("ble_trigger", ".img_des");
+      switch(data){
+        case "touch1_single":
+          win.webContents.send("ble_trigger", ".txt_rec");
+          break;
+        case "touch2_single":
+          win.webContents.send("ble_trigger", ".freeform");
+          break;
+        case "touch1_double":
+          win.webContents.send("ble_trigger", ".coord");
+          break;
+        case "touch2_double":
+          win.webContents.send("ble_trigger", ".img_des");
+          break;
+        case "touch1_hold":
+          // reset variables and UI
+          initTries = 5;
+          APItriggered = false;
+          win.webContents.send("terminate", 1);
+          VitTracker.write(JSON.stringify({"reset": true})+"\n"); // reset Vit tracker
+          break;
+        case "touch2_hold":
+          // not implemented yet, can be used for any additional feature or function
+          break;
       }
     } else {
       currentImageBase64 = data.toString('base64'); // store the image data as base64

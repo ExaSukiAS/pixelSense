@@ -3,6 +3,7 @@
 #include "esp_camera.h"
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
+#include <ESPmDNS.h>
 #include "fb_gfx.h"
 // to disable brownout detector
 #include "soc/soc.h" 
@@ -58,6 +59,7 @@ bool distanceSensorBooted = false;
 // Websocket server (port 9000)
 int wsPort = 9000;
 WebSocketsServer webSocketServer(wsPort);
+const char* espHostName = "pixelsense_esp";
 
 bool isStreamingStarted = false; // flag for image streaming state
 
@@ -320,6 +322,13 @@ void setup() {
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi
     Serial.println("Connected to Wi-Fi");
+    WiFi.setHostname(espHostName);
+    if (!MDNS.begin(espHostName)) {
+      Serial.println("Error starting mDNS");
+      return;
+    }
+    Serial.print("ESP32 available at: ");
+    Serial.print("ws://"); Serial.print(espHostName);Serial.print(".local:"); Serial.println(wsPort);
     Serial.print("ws://");Serial.print(WiFi.localIP());Serial.print(":");Serial.println(wsPort);
 
     // initialize laser distance sensor
