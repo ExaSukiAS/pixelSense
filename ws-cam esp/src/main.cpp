@@ -67,6 +67,7 @@ bool isStreamingStarted = false; // flag for image streaming state
 bool prevToggle = false;
 int prevFreq = 0;
 
+const int initialFrameDropCount = 3; // number of initial frames to drop after resolution change to allow camera to stabilize
 camera_config_t config; // global camera configuration
 camera_fb_t *latestFb = NULL; // latest frame buffer for streaming
 bool frameReady = false; // flag to indicate a new frame is ready
@@ -120,6 +121,7 @@ void setupCamera() {
 void sendImage() {
   camera_fb_t *fb = NULL;
   fb = esp_camera_fb_get();
+
   if (!fb) {
     Serial.println("Camera capture failed");
     return;
@@ -140,7 +142,7 @@ void setResolution(char res){
   }
 
   // Discard first few dark frames
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < initialFrameDropCount; i++) {
     camera_fb_t *tmp = esp_camera_fb_get();
     if (tmp) esp_camera_fb_return(tmp);
     delay(50);
@@ -321,6 +323,7 @@ void setup() {
 
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi
+    WiFi.setSleep(false); // disable wifi sleep to improve streaming stability
     Serial.println("Connected to Wi-Fi");
     WiFi.setHostname(espHostName);
     if (!MDNS.begin(espHostName)) {
@@ -352,6 +355,7 @@ void setup() {
     }
 
     digitalWrite(onBoardLedPin, LOW); // turn on onboard LED to indicate ready state (logic is inverted as the onboard LED is active LOW)
+    setResolution('h'); // start with high resolution
 }
 
 void loop() {
