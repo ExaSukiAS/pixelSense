@@ -22,7 +22,7 @@ class Tracker:
 
         # Vit tracker initialization
         self.useRecovery = useRecovery
-        modelPath = r"../tracker/object_tracking_vittrack_2023sep.onnx"
+        modelPath = "object_tracking_vittrack_2023sep.onnx"
         params = cv2.TrackerVit_Params()
         params.net = modelPath
         self.objTracker = cv2.TrackerVit.create(params)

@@ -30,12 +30,12 @@ voiceConnected = False
 
 # fetch tehe correct gemini api key from geminiAPI.json
 geminiAPIkey = ""
-with open("../geminiAPI.json", "r") as jsonStringObj:
+with open("geminiAPI.json", "r") as jsonStringObj:
     apiKeys = json.load(jsonStringObj)
     geminiAPIkey = apiKeys[geminiKeyToUse]
 AIistructions = {}
 # fetch AI instructions
-with open("../instructions.txt", "r") as file:
+with open("instructions.txt", "r") as file:
     instructions = file.read()
     instructions = instructions.split("$$")
     keyFound = False
@@ -142,8 +142,9 @@ def espMessageHandler(message):
 lastSendTime = 0
 def espImageHandler(image):
     global coordRunning, tracker
-    if coordRunning and tracker.processingFrame:
-        return  # drop frame immediately if tracker is still processing
+    if tracker is not None:
+        if coordRunning and tracker.processingFrame:
+            return  # drop frame immediately if tracker is still processing
     
     global currentImage
     currentImage = image
@@ -178,17 +179,17 @@ def espImageHandler(image):
                 asyncio.run_coroutine_threadsafe(executeCoordination(), voiceServer.loop) # run in the same asyncio loop as voiceServer
     else:
         global trackerInitialized, lastSendTime
-        if trackerInitialized and time.time() - lastSendTime > 0.1: # cap at 10FPS
+        if trackerInitialized and tracker is not None and time.time() - lastSendTime > 0.1: # cap at 10FPS
             global objRIO_norm, handRIO_norm, trackedObjName
             coordinates = tracker.getCoordinates(currentImage)
             
-            if coordinates[0] is not None:
-                objRIO_norm = coordinates[0]
+            if coordinates[1] is not None:
+                objRIO_norm = coordinates[1]
             else:
                 objRIO_norm = (0,0,0,0)
 
-            if coordinates[1] is not None:
-                handRIO_norm = coordinates[1]
+            if coordinates[0] is not None:
+                handRIO_norm = coordinates[0]
             else:
                 handRIO_norm = (0,0,0,0)
 

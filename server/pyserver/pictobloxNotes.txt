@@ -1,0 +1,17 @@
+Pictoblox uses python 3.8.10, use the following version of teh packages:
+    opencv-contrib-python==4.9.0.80
+    mediapipe==0.10.5
+    websockets==13.1
+    termcolor==2.4.0
+
+For esp32 code compilation:
+Download new esp32 core from: https://github.com/espressif/arduino-esp32
+Head to: C:\Program Files\PictoBlox\resources\arduino-1.8.5\hardware\espressif
+Here, delete the old esp32 core folder
+Paste the newly downloaded esp32 core folder
+Rename the new esp32 core folder to “esp32”
+Run cmd as administrator, run: 
+cd C:\Program Files\PictoBlox\resources\arduino-1.8.5\hardware\espressif\esp32\tools
+Then, run get.exe
+
+If error is shown, enable long file name.
