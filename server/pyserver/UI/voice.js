@@ -1,4 +1,4 @@
-let speakButton = document.getElementById('speakButton');
+const speakButton = document.getElementById('enableAudioButton');
 
 const synth = window.speechSynthesis;
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;

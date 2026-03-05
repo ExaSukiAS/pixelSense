@@ -1,0 +1,251 @@
+body {
+  background-color: #131314;
+  background: radial-gradient(#292929 2px, #131314 2px);
+  background-size: 100px 100px;
+  overflow: hidden;
+  text-align: left;
+  color: white;
+  margin: 0px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  text-decoration: none;
+}
+
+.top_light {
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  background: radial-gradient(100vw 300px at 50% -100px, rgba(31, 50, 82, 0.7137254902) 20%, rgba(19, 31, 51, 0) 100%);
+  pointer-events: none;
+}
+
+::-webkit-scrollbar {
+  height: 10px;
+  width: 5px;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #585858;
+  height: 5px;
+  width: 5px;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.taskbar {
+  display: flex;
+  flex-direction: row;
+  gap: 40px;
+  justify-content: space-around;
+  align-items: center;
+  width: 100vw;
+  height: 70px;
+}
+.taskbar .statusGroup {
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
+  justify-content: center;
+  align-items: center;
+  width: auto;
+  height: auto;
+}
+.taskbar .statusGroup .statusPill {
+  border: 2px solid #d82f48;
+  border-radius: 100px;
+  padding: 2px 10px;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  width: auto;
+  height: auto;
+}
+.taskbar .statusGroup .statusPill span {
+  font-family: "Poppins";
+  color: #d82f48;
+}
+.taskbar .statusGroup .statusPill svg {
+  fill: #d82f48;
+}
+.taskbar .taskLoader {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  width: auto;
+  height: auto;
+}
+.taskbar .taskLoader span {
+  font-family: "Poppins";
+  font-size: 20px;
+  opacity: 0;
+}
+.taskbar .taskLoader .levelOuter {
+  width: 30vw;
+  height: 16px;
+  border: 4px solid white;
+  border-radius: 100px;
+}
+.taskbar .taskLoader .levelOuter .levelInner {
+  background-color: #4e83ef;
+  width: 0%;
+  height: 100%;
+  border-radius: 100px;
+  transition: 0.5s;
+}
+.taskbar .taskLoader {
+  transition: 0.4s;
+  opacity: 0;
+}
+.taskbar .buttons {
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
+  justify-content: center;
+  align-items: center;
+  width: auto;
+  height: auto;
+}
+.taskbar .buttons button {
+  background-color: #4e83ef;
+  color: white;
+  font-family: "Poppins";
+  font-size: 15px;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 10px;
+  transition: 0.2s;
+  display: flex;
+  flex-direction: row;
+  gap: 5px;
+  justify-content: center;
+  align-items: center;
+  width: auto;
+  height: auto;
+}
+.taskbar .buttons button svg {
+  fill: white;
+}
+.taskbar .buttons button:hover {
+  background-color: #80aaff;
+  color: #131314;
+}
+.taskbar .buttons button:hover svg {
+  fill: #131314;
+}
+.taskbar .buttons button:active {
+  transform: scale(0.8);
+}
+
+.mainBody {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: row;
+  gap: 40px;
+  justify-content: space-around;
+  align-items: center;
+  width: 100vw;
+  height: calc(100vh - 90px);
+}
+.mainBody .verticalGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  justify-content: space-around;
+  align-items: center;
+  width: 50%;
+  height: 100%;
+}
+.mainBody .verticalGroup .systemLog {
+  width: calc(100% - 40px);
+  flex-grow: 1;
+  background-color: #2c2c2c;
+  border-radius: 15px;
+  padding: 20px;
+  max-height: 30%;
+}
+.mainBody .verticalGroup span {
+  font-family: "Poppins";
+  word-break: break-all;
+}
+.mainBody .verticalGroup .imageContainer {
+  display: inline-block;
+  position: relative;
+  width: 60%;
+}
+.mainBody .verticalGroup .imageContainer img {
+  width: 100%;
+  border-radius: 15px;
+}
+.mainBody .verticalGroup .imageContainer .bounding_box {
+  position: absolute;
+  border: 2px solid #4f82ed;
+  box-sizing: border-box;
+  pointer-events: none;
+  border-radius: 4px;
+}
+.mainBody .verticalGroup .imageContainer .bounding_box-label {
+  position: absolute;
+  font-family: "Poppins";
+  background-color: #4f82ed;
+  color: white;
+  padding: 2px 5px;
+  font-size: 10px;
+  border-radius: 3px;
+  top: 0;
+  left: 0;
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+.mainBody .verticalGroup .imageContainer .diagonal-line {
+  position: absolute;
+  height: 2px;
+  background: #ed4f4f;
+  transform-origin: left center;
+}
+.mainBody .buttonGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 40px;
+}
+.mainBody .buttonGrid button {
+  font-family: "Poppins";
+  font-size: 20px;
+  width: 230px;
+  height: 70px;
+  border-radius: 12px;
+  border: none;
+  font-weight: 600;
+  background-color: white;
+  box-shadow: 0 0px 7px #ffffff;
+  transition: 0.2s;
+}
+.mainBody .buttonGrid button:hover {
+  background-color: #2c2e37;
+  color: white;
+}
+.mainBody .buttonGrid button:active {
+  transform: scale(0.8);
+}
+.mainBody .buttonGrid .featureRunning {
+  transform: scale(1.2);
+  color: white;
+  background-color: #131314;
+}/*# sourceMappingURL=style.css.map */

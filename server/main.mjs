@@ -24,7 +24,7 @@ function createWindow() {
 app.whenReady().then(createWindow)
 
 const keyToUse = "8";
-const espHostName = "pixelsense_esp.local";
+const espHostName = "192.168.68.103";
 
 // all websocket and TCP connection port
 const voiceUIport = 9999;

@@ -1,0 +1,196 @@
+$darkGrey: #131314;
+$paragraphColor: #dfdfdf;
+$grey: #2c2c2c;
+$lightGrey: #424242;
+
+$placeholderColor: #747474;
+$headingColor: #FFFFFF;
+
+$blue: #4e83ef;
+$lightBlue: #80aaff;
+$darkBlue: #283143;
+$violet: #9872cc;
+$pink: #c36990;
+$red: #d82f48;
+
+body {
+    background-color: $darkGrey;
+    background: radial-gradient(#292929 2px, #131314 2px);
+    background-size: 100px 100px;
+    overflow: hidden;
+    text-align: left;
+    color: white;
+    margin: 0px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+button{
+    cursor: pointer;
+}
+a{
+    text-decoration: none;
+}
+.top_light{
+    position: absolute;
+    inset: 0;
+    z-index: -10;
+    background: radial-gradient(100vw 300px at 50% -100px, #1f3252b6 20%, rgba(19, 31, 51, 0) 100%);
+    pointer-events: none;
+}
+
+@mixin horizontalFrame($width, $height, $gap: 20px, $justify-content: center, $align-items: center) {
+    display: flex;
+    flex-direction: row;
+    gap: $gap;
+    justify-content: $justify-content;
+    align-items: $align-items;
+    width: $width;
+    height: $height;
+}
+@mixin verticalFrame($width, $height, $gap: 20px, $justify-content: center, $align-items: center) {
+    display: flex;
+    flex-direction: column;
+    gap: $gap;
+    justify-content: $justify-content;
+    align-items: $align-items;
+    width: $width;
+    height: $height;
+}
+@mixin glassmorphism($bgColor, $borderColor, $blur){
+    background: $bgColor;
+    backdrop-filter: blur($blur);
+    -webkit-backdrop-filter: blur($blur);
+    border: 1px solid $borderColor;
+}
+@mixin dottedPattern(){
+    background: radial-gradient(#292929 2px, #131314 2px);
+    background-size: 100px 100px;
+}
+@mixin backButtonStyle(){
+    position: relative;
+    top: 15px;
+    left: 15px;
+    background-color: transparent;
+    border: none;
+    @include horizontalFrame($width: 100%, $height: auto, $gap: 20px, $justify-content: flex-start, $align-items: center);
+    svg{
+        width: 30px;
+        height: 30px;
+        fill: rgb(216, 216, 216);
+        transition: .3s;
+    }
+    &:hover{
+        svg{
+            fill: white;
+        }
+    }
+}
+@mixin stylishButton($font-size: 26px, $background-color: $darkGrey, $color: white, $svg-color: white, $svg-size: 30px, $max-gap: 30px, $shadowColor: white){
+    font-weight: bold;
+    font-size: $font-size;
+    border: none;
+    background-color: $background-color;
+    color: $color;
+    -webkit-box-shadow: 0px 0px 5px 0px $shadowColor;
+    -moz-box-shadow: 0px 0px 5px 0px $shadowColor;
+    box-shadow: 0px 0px 5px 0px $shadowColor;
+    border-radius: 100px;
+    padding: 4px;
+    padding-left: 10px;
+    padding-right: 10px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    transition: .3s;
+    svg{
+        fill: $svg-color;
+        width: $svg-size;
+        height: $svg-size;
+    } 
+    @media (hover: hover) { 
+        &:hover{
+            gap: $max-gap;
+        }
+    }
+}
+@mixin loader(){
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    @include glassmorphism(rgba(44, 46, 55, 0.4), rgba(255, 255, 255, 0.5), 9.5px);
+    border: none;
+    @include verticalFrame($width: 100%, $height: 100%, $gap: 0px, $justify-content: center, $align-items: center);
+    .changingShapeOut{
+        background-color: white;
+        border-radius: 50px;
+        width: 100px;
+        @include verticalFrame($width: 100px, $height: 100px, $gap: 0px, $justify-content: center, $align-items: center);
+        animation: changingShape 3s alternate infinite;
+    }
+    .changingShapeIn{
+        background-color: white;
+        border-radius: 100px;
+        border: 5px solid $darkGrey;
+        width: 50px;
+        height: 50px;
+        transform: rotate(45deg);
+        animation: changingShape 5s alternate infinite;
+    }
+    @keyframes changingShape {
+        0%{
+            border-radius: 50px;
+        } 35%{
+            border-radius: 20px;
+            transform: rotate(45deg);
+        } 60%{
+            border-radius: 10px;
+            transform: rotate(90deg);
+        } 100%{
+            border-radius: 50px;
+            transform: rotate(0deg);
+        }
+    }
+}
+@mixin messagePopup(){
+    position: fixed;
+    top: -70px;
+    text-align: center;
+    font-size: 18px;
+    background-color: $lightBlue;
+    color: $darkGrey;
+    font-weight: bold;
+    padding: 10px;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    svg{
+        width: 25px;
+        height: 25px;
+        fill: $darkGrey;
+        margin-right: 5px;
+    }
+    transition: .3s;
+}
+
+::-webkit-scrollbar {
+    height:10px; 
+    width: 5px;
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb {
+    background: #585858;
+    height: 5px; 
+    width: 5px; 
+    border-radius: 10px;
+}
+::-webkit-scrollbar-track {
+    background: transparent; 
+}

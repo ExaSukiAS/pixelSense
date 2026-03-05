@@ -1,0 +1,46 @@
+body {
+  background-color: #131314;
+  background: radial-gradient(#292929 2px, #131314 2px);
+  background-size: 100px 100px;
+  overflow: hidden;
+  text-align: left;
+  color: white;
+  margin: 0px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  text-decoration: none;
+}
+
+.top_light {
+  position: absolute;
+  inset: 0;
+  z-index: -10;
+  background: radial-gradient(100vw 300px at 50% -100px, rgba(31, 50, 82, 0.7137254902) 20%, rgba(19, 31, 51, 0) 100%);
+  pointer-events: none;
+}
+
+::-webkit-scrollbar {
+  height: 10px;
+  width: 5px;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #585858;
+  height: 5px;
+  width: 5px;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}/*# sourceMappingURL=base.css.map */
