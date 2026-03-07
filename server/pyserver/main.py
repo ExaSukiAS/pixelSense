@@ -3,7 +3,7 @@ import json
 import asyncio
 import re
 from termcolor import colored
-from ws_esp32 import ESP32WebSocket
+from esp32Handler import ESP32WebSocket
 from gemini import GeminiClient
 from voice import Voice
 from tracker import Tracker
@@ -62,7 +62,6 @@ def fastGeminiResponseHandler(responseChunk):
         guiServer.sendMessage("log", fullResponse)
         fullResponse = ""
         return 
-    print(responseChunk, sep=" ")
     guiServer.sendMessage("loader", "80")
     guiServer.sendMessage("log", fullResponse)
     # sanitizes text for Text-to-Speech by removing markdown formatting, emojis, and unwanted symbols
@@ -90,7 +89,6 @@ def coordGeminiResponseHandler(responseChunk):
 
         global initialObjRIO_norm
         initialObjRIO_norm = (int(objectCoordinate.get("xmin")), int(objectCoordinate.get("ymin")), int(objectCoordinate.get("xmax")), int(objectCoordinate.get("ymax")))
-        print(initialObjRIO_norm)
 
         # initialize tracker model
         global tracker, trackerConfidenceThreshold

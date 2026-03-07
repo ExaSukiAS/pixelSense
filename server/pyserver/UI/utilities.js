@@ -40,7 +40,8 @@ export function toggleStatusPill(element, status) {
 
 export function featureRunningIndication(element, status){
     if (!element) return;
-    element.classList.toggle("feature-running", status);
+    element.classList.toggle("featureRunning", status);
+    element.style.animation = status ? 'shadowAnimation 3s infinite alternate' : '';
 }
 
 export function setLoader(taskLoader, taskPercentageSpan, levelInnerDiv, targetValue){

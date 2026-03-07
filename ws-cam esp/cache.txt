@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include <WebSocketsServer.h>
-#include <WiFiUdp.h>
 #include "esp_camera.h"
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
@@ -58,17 +57,9 @@ const int alertDistance = 100; // distance threshold in mm for alert
 bool distanceSensorBooted = false;
 
 // Websocket server (port 9000)
-const int wsPort = 9000;
+int wsPort = 9000;
 WebSocketsServer webSocketServer(wsPort);
 const char* espHostName = "pixelsense_esp";
-
-// UDP server
-const int udpPort = 9001;
-IPAddress computerIP;
-const uint16_t computerPort = 5005;
-bool computerDiscovered = false;
-const uint32_t udpStreamPacketSize = 1400;
-WiFiUDP udpServer;
 
 bool isStreamingStarted = false; // flag for image streaming state
 
@@ -126,7 +117,7 @@ void setupCamera() {
   }
 }
 
-// sends a static-single image via websocket
+// sends a single image via websocket
 void sendImage() {
   camera_fb_t *fb = NULL;
   fb = esp_camera_fb_get();
@@ -170,6 +161,7 @@ void toggleStreaming(bool toggle){
   }
 }
 
+
 // handles incoming data through websocket
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch (type) {
@@ -198,36 +190,6 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
     default:
       break;
   }
-}
-
-// handle handshake with computer via UDP
-void handleUDPhandshake(){
-    // fetch the computer's IP 
-    computerIP = udpServer.remoteIP();
-
-    // send a response back to the detected IP
-    udpServer.beginPacket(computerIP, computerPort);
-    udpServer.print("receivedPacket");
-    udpServer.endPacket();
-}
-
-void sendFrameUDP(camera_fb_t *fb){
-    static uint16_t frameID = 0;
-    frameID++;
-
-    for(uint32_t offset = 0; offset < fb->len; offset += udpStreamPacketSize){
-        uint16_t chunk = udpStreamPacketSize;
-        if(offset + chunk > fb->len){
-            chunk = fb->len - offset;
-        }
-
-        udpServer.beginPacket(computerIP, computerPort);
-        udpServer.write((uint8_t*)&frameID, 2);
-        udpServer.write((uint8_t*)&offset, 4);
-        udpServer.write(fb->buf + offset, chunk);
-        udpServer.endPacket();
-    }
-    delayMicroseconds(200);
 }
 
 // captures frames continuously and saves to latestFb
@@ -351,6 +313,12 @@ void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // Turn-off the brownout detector
     Serial.begin(115200);
 
+    // Attact GPIOs
+    ledcSetup(0, 50, 8);
+    ledcAttachPin(speakerPin, 0); // speaker pin
+    pinMode(onBoardLedPin, OUTPUT);
+    Wire.begin(laserSensorSDA, laserSensorSCL); // attach laser sensor
+
     setupCamera(); // initialize camera
 
     WiFi.begin(ssid, password);
@@ -362,19 +330,9 @@ void setup() {
       Serial.println("Error starting mDNS");
       return;
     }
-
-    udpServer.begin(udpPort);
-
-    Serial.println("ESP32 available at: ");
-    Serial.print("\t");Serial.print(espHostName);Serial.print(".local:"); Serial.print(wsPort);Serial.println("   <- Websocket mDNS");
-    Serial.print("\t");Serial.print(WiFi.localIP());Serial.print(":");Serial.print(wsPort);Serial.println("   <- Websocket");
-    Serial.print("\t");Serial.print(WiFi.localIP());Serial.print(":");Serial.print(udpPort);Serial.println("   <- UDP");
-
-    // Attact GPIOs
-    ledcSetup(0, 50, 8);
-    ledcAttachPin(speakerPin, 0); // speaker pin
-    pinMode(onBoardLedPin, OUTPUT);
-    Wire.begin(laserSensorSDA, laserSensorSCL); // attach laser sensor
+    Serial.print("ESP32 available at: ");
+    Serial.print("ws://"); Serial.print(espHostName);Serial.print(".local:"); Serial.println(wsPort);
+    Serial.print("ws://");Serial.print(WiFi.localIP());Serial.print(":");Serial.println(wsPort);
 
     // initialize laser distance sensor
     if(lox.begin()){
@@ -413,17 +371,9 @@ void loop() {
     // handle websocket events
     webSocketServer.loop();
     if(frameReady){
-      sendFrameUDP(latestFb);
-      esp_camera_fb_return(latestFb);
-      frameReady = false;
-    }
-
-    // handle incoming UDP bytes
-    int udpPacketSize = udpServer.parsePacket();
-    if (udpPacketSize) {
-      if(!computerDiscovered){
-        handleUDPhandshake();
-      }
+        webSocketServer.broadcastBIN(latestFb->buf, latestFb->len);
+        esp_camera_fb_return(latestFb);
+        frameReady = false;
     }
 
     // check if range is ready (non-blocking check)

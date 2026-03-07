@@ -116,11 +116,12 @@ a {
 .taskbar .buttons {
   display: flex;
   flex-direction: row;
-  gap: 20px;
+  gap: 10px;
   justify-content: center;
   align-items: center;
   width: auto;
   height: auto;
+  flex-wrap: wrap;
 }
 .taskbar .buttons button {
   background-color: #4e83ef;
@@ -183,6 +184,8 @@ a {
 .mainBody .verticalGroup span {
   font-family: "Poppins";
   word-break: break-all;
+  overflow-y: scroll;
+  overflow-x: hidden;
 }
 .mainBody .verticalGroup .imageContainer {
   display: inline-block;
@@ -244,8 +247,18 @@ a {
 .mainBody .buttonGrid button:active {
   transform: scale(0.8);
 }
-.mainBody .buttonGrid .featureRunning {
+
+@keyframes shadowAnimation {
+  0% {
+    box-shadow: 0 0 20px #80aaff;
+  }
+  50% {
+    box-shadow: 0 0 20px #9872cc;
+  }
+  100% {
+    box-shadow: 0 0 20px #80aaff;
+  }
+}
+.featureRunning {
   transform: scale(1.2);
-  color: white;
-  background-color: #131314;
 }/*# sourceMappingURL=style.css.map */

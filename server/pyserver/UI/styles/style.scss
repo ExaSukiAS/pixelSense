@@ -1,4 +1,4 @@
-@import "base/base.scss";
+@import "./base.scss";
 .taskbar{
     @include horizontalFrame(100vw, 70px, 40px, space-around);
     .statusGroup{
@@ -41,7 +41,9 @@
         opacity: 0;
     }
     .buttons{
-        @include horizontalFrame(auto, auto);
+        @include horizontalFrame(auto, auto, 10px);
+        flex-wrap: wrap;
+        
         button{
             background-color: $blue;
             color: white;
@@ -85,6 +87,8 @@
         span{
             font-family: 'Poppins';
             word-break: break-all;
+            overflow-y: scroll;
+            overflow-x: hidden;
         }
         .imageContainer{
             display: inline-block;
@@ -147,11 +151,21 @@
                 transform: scale(0.8);
             }
         }
-        .featureRunning {
-            transform: scale(1.2);
-            color: white;
-            background-color: $darkGrey;
-        }
-
     }
+}
+
+@keyframes shadowAnimation {
+    0% {
+        box-shadow: 0 0 20px $lightBlue;
+    }
+    50% {
+        box-shadow: 0 0 20px $violet;
+    }
+    100% {
+        box-shadow: 0 0 20px $lightBlue;
+    }
+}
+
+.featureRunning {
+    transform: scale(1.2);
 }

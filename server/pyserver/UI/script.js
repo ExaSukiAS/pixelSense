@@ -1,4 +1,4 @@
-import { toggleStatusPill, colors, featureRunningIndication, setLoader, drawConnectedBoundingBoxes } from "./base/utilities.js";
+import { toggleStatusPill, colors, featureRunningIndication, setLoader, drawConnectedBoundingBoxes } from "./utilities.js";
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked@4.0.10/lib/marked.esm.js';
 
 // DOM elements
