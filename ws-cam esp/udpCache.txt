@@ -4,8 +4,8 @@
 #include "esp_camera.h"
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
-#include "peripherals.h"
-
+#include <ESPmDNS.h>
+#include "fb_gfx.h"
 // to disable brownout detector
 #include "soc/soc.h" 
 #include "soc/rtc_cntl_reg.h" 
@@ -14,7 +14,7 @@
 const char* ssid = "Amartya";
 const char* password = "amartya@@2020";
 
-// camera pins
+// defining camera pins
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM     0
@@ -32,16 +32,13 @@ const char* password = "amartya@@2020";
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-// Laser sensor, speaker, touch sensor, microphone and onboard LED pins
-const int laserSensorSDA = 13;
-const int laserSensorSCL = 14;
-const int onBoardLedPin = 33;
-const int touch1Pin = 15;
-const int touch2Pin = 4;
-const int i2sChannelSelectPin = 12; 
-const int i2sClockPin = 2;         
-const int i2sSpeakerDataPin = 3; 
-const int i2sMicDataPin = 4;  
+// Laser sensor, speaker, touch sensor and onboard LED pins
+int laserSensorSDA = 13;
+int laserSensorSCL = 14;
+int speakerPin = 2;
+int onBoardLedPin = 33;
+int touch1Pin = 15;
+int touch2Pin = 4;
 
 // Camera parameters
 #define FRAME_SIZE_LOW  FRAMESIZE_VGA
@@ -63,18 +60,21 @@ bool distanceSensorBooted = false;
 // Websocket server (port 9000)
 const int wsPort = 9000;
 WebSocketsServer webSocketServer(wsPort);
+const char* espHostName = "pixelsense_esp";
 
 // UDP server
-const int udpPort = 9001; // UDP port of esp32
+const int udpPort = 9001;
 IPAddress computerIP;
-const uint16_t imageStreamingPort = 5005; // port of the server(computer) at which images will be streamed and handshake will be executed
-const uint16_t micAudioStreamingPort = 5006; // port of the server(computer) at which audio samples from microphone will be streamed
+const uint16_t computerPort = 5005;
 bool computerDiscovered = false;
 const uint32_t udpStreamPacketSize = 1400;
 WiFiUDP udpServer;
 
-bool imageStreamingStarted = false; // flag for image streaming state
-bool audioStreamingStarted = false; // flag for audio streaming state
+bool isStreamingStarted = false; // flag for image streaming state
+
+// speaker variables
+bool prevToggle = false;
+int prevFreq = 0;
 
 const int initialFrameDropCount = 3; // number of initial frames to drop after resolution change to allow camera to stabilize
 camera_config_t config; // global camera configuration
@@ -82,13 +82,7 @@ camera_fb_t *latestFb = NULL; // latest frame buffer for streaming
 bool frameReady = false; // flag to indicate a new frame is ready
 char currentRes = 'l'; // current resolution setting
 
-// touch sensor objects
-TouchSensor touch1(touch1Pin);
-TouchSensor touch2(touch2Pin);
-
-Speaker speaker;// speaker object
-
-// camera init with safe XCLK + params
+// Camera init with safe XCLK + params
 void setupCamera() {
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer   = LEDC_TIMER_0;
@@ -137,10 +131,12 @@ void sendImage() {
   camera_fb_t *fb = NULL;
   fb = esp_camera_fb_get();
 
-  if (!fb) { // camera capture failure
+  if (!fb) {
+    Serial.println("Camera capture failed");
     return;
+  } else {
+    Serial.println("Image captured");
   }
-
   webSocketServer.broadcastBIN(fb->buf, fb->len);
   esp_camera_fb_return(fb);
 }
@@ -164,25 +160,17 @@ void setResolution(char res){
 }
 
 // toggles image streaming state
-void toggleImageStreaming(bool toggle){
+void toggleStreaming(bool toggle){
   if(toggle){
-    imageStreamingStarted = true;
+    isStreamingStarted = true;
+    Serial.println("Streaming started");
   } else {
-    imageStreamingStarted = false;
-  }
-}
-
-// toggles audio streaming state
-void toggleMicAudioStreaming(bool toggle){
-  if(toggle){
-    audioStreamingStarted = true;
-  } else {
-    audioStreamingStarted = false;
+    isStreamingStarted = false;
+    Serial.println("Streaming stopped");
   }
 }
 
 // handles incoming data through websocket
-// commands: captureHigh, captureLow, startImageStream, stopImageStream, startAudioStream, stopAudioStream
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch (type) {
     case WStype_TEXT:
@@ -196,17 +184,13 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
           setResolution('l');
         }
         sendImage();
-      } else if (String((char*)payload) == "startImageStream"){
+      } else if (String((char*)payload) == "startStream"){
         if(currentRes != 'l'){
           setResolution('l');
         }
-        toggleImageStreaming(true);
-      } else if (String((char*)payload) == "stopImageStream"){
-        toggleImageStreaming(false);
-      } else if (String((char*)payload) == "startAudioStream"){
-        toggleMicAudioStreaming(true);
-      } else if (String((char*)payload) == "stopAudioStream"){
-        toggleMicAudioStreaming(false);
+        toggleStreaming(true);
+      } else if (String((char*)payload) == "stopStream"){
+        toggleStreaming(false);
       }
       break;
     case WStype_DISCONNECTED:
@@ -222,28 +206,11 @@ void handleUDPhandshake(){
     computerIP = udpServer.remoteIP();
 
     // send a response back to the detected IP
-    udpServer.beginPacket(computerIP, imageStreamingPort);
+    udpServer.beginPacket(computerIP, computerPort);
     udpServer.print("receivedPacket");
     udpServer.endPacket();
 }
 
-// stores audio samples got from server(computer) via UDP in the speaker.jitterBuffer
-void processUDPAudioData() {
-  uint8_t pkt[1024]; // received packet
-  int len = udpServer.read(pkt, sizeof(pkt));
-  
-  // take only the samples by removing the 4-byte header(packet id)
-  for (int i = 4; i < len - 1; i += 2) {
-    int16_t sample = (pkt[i + 1] << 8) | pkt[i]; // each byte(8bit) of the pkt is only half of a full 16bit sample, so we glue the high and low bytes
-    int nextHead = (speaker.head + 1) % JITTER_BUFFER_SIZE;
-    if (nextHead != speaker.tail) { 
-      speaker.jitterBuffer[speaker.head] = sample;
-      speaker.head = nextHead;
-    }
-  }
-}
-
-// sends image stream via UDP
 void sendFrameUDP(camera_fb_t *fb){
     static uint16_t frameID = 0;
     frameID++;
@@ -254,7 +221,7 @@ void sendFrameUDP(camera_fb_t *fb){
             chunk = fb->len - offset;
         }
 
-        udpServer.beginPacket(computerIP, imageStreamingPort);
+        udpServer.beginPacket(computerIP, computerPort);
         udpServer.write((uint8_t*)&frameID, 2);
         udpServer.write((uint8_t*)&offset, 4);
         udpServer.write(fb->buf + offset, chunk);
@@ -266,7 +233,7 @@ void sendFrameUDP(camera_fb_t *fb){
 // captures frames continuously and saves to latestFb
 void frameCaptureTask(void *pv){
   for(;;){
-    if(!imageStreamingStarted){
+    if(!isStreamingStarted){
       vTaskDelay(50 / portTICK_PERIOD_MS);
       continue;
     }
@@ -287,24 +254,124 @@ void frameCaptureTask(void *pv){
   }
 }
 
+// plays tone with speaker
+void playTone(int freq, bool toggle){
+  if((prevToggle == toggle) && (prevFreq == freq)){
+    return;
+  }
+  if(toggle){
+    ledcWriteTone(0, freq);
+  } else {
+    ledcWrite(0, 0);
+  }
+  prevToggle = toggle; 
+  prevFreq = freq;
+}
+
+// Touch sensor class with single tap, double tap and hold detection
+class TouchSensor{
+  private:
+    int pin;
+    unsigned long lastChangeTime = 0;
+    unsigned long touchStart = 0;
+    unsigned long lastTapTime = 0;      // time of last release
+    unsigned long pendingTapTime = 0;   // time we started waiting for a possible double-tap
+    bool lastTouched = false;
+    bool pendingSingleTap = false;
+
+    const unsigned long doubleTapWindow = 300; 
+    const unsigned long holdWindow = 500;     
+  public:
+    // constructor to initialize touch sensor pin
+    TouchSensor(int touchPin) {
+      pinMode(touchPin, INPUT_PULLUP);
+      pin = touchPin;
+    }
+
+    // Reads touch sensors
+    bool readTouch() {
+        // Read the touch sensor multiple times to get a more stable reading
+        const int numReadings = 5;  
+        int totalScore = 0;     
+        for (int i = 0; i < numReadings; i++) {
+            totalScore += digitalRead(pin);
+        }
+        float score = 1 - (totalScore / (float)numReadings);  
+
+        return (score > 0.7); // Return true if the score is above threshold (considered pressed)
+    }
+
+    // Call frequently from loop(). Returns:
+    // 0 = no event
+    // 1 = single tap (emitted after doubleTapWindow expires without second tap)
+    // 2 = double tap
+    // 3 = hold (touch lasted >= holdWindow)
+    int getTouchState() {
+      unsigned long now = millis();
+      bool touched = readTouch();
+
+      // detect state changes
+      if (touched != lastTouched) {
+        lastChangeTime = now;
+        if (touched) {
+          touchStart = now; // touch started
+        } else {
+          if (pendingSingleTap && (now - pendingTapTime) <= doubleTapWindow) { // double tap detection
+            pendingSingleTap = false;
+            lastTouched = touched;
+            return 2;
+          } else {
+            pendingSingleTap = true;
+            pendingTapTime = now;
+          }
+        }
+      } else if (touched && (now - touchStart) >= holdWindow) { // hold detection
+        lastTouched = false;
+        pendingSingleTap = false;
+        return 3;
+      }
+
+      if (pendingSingleTap && (now - pendingTapTime) > doubleTapWindow) { // single tap detection
+        pendingSingleTap = false;
+        lastTouched = touched;
+        return 1;
+      }
+
+      lastTouched = touched;
+      return 0;
+    }
+};
+
+// touch sensor objects
+TouchSensor touch1(touch1Pin);
+TouchSensor touch2(touch2Pin);
+
 void setup() {
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // Turn-off the brownout detector
-
     Serial.begin(115200);
 
     setupCamera(); // initialize camera
 
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi
+    WiFi.setSleep(false); // disable wifi sleep to improve streaming stability
     Serial.println("Connected to Wi-Fi");
+    WiFi.setHostname(espHostName);
+    if (!MDNS.begin(espHostName)) {
+      Serial.println("Error starting mDNS");
+      return;
+    }
 
     udpServer.begin(udpPort);
 
     Serial.println("ESP32 available at: ");
+    Serial.print("\t");Serial.print(espHostName);Serial.print(".local:"); Serial.print(wsPort);Serial.println("   <- Websocket mDNS");
     Serial.print("\t");Serial.print(WiFi.localIP());Serial.print(":");Serial.print(wsPort);Serial.println("   <- Websocket");
     Serial.print("\t");Serial.print(WiFi.localIP());Serial.print(":");Serial.print(udpPort);Serial.println("   <- UDP");
 
     // Attact GPIOs
+    ledcSetup(0, 50, 8);
+    ledcAttachPin(speakerPin, 0); // speaker pin
     pinMode(onBoardLedPin, OUTPUT);
     Wire.begin(laserSensorSDA, laserSensorSCL); // attach laser sensor
 
@@ -312,14 +379,21 @@ void setup() {
     if(lox.begin()){
       distanceSensorBooted = true;
     } else {
-      //buzzer.playTone(Buzzer::ERROR); // play error tone to indicate sensor failure
+      // play error tone if sensor fails to boot
+      playTone(2000, true); delay(600);
+      playTone(2000, false); delay(600);
+      playTone(2000, true); delay(600);
+      playTone(2000, false); 
     }
 
     webSocketServer.begin();
     webSocketServer.onEvent(webSocketEvent);
 
-    BaseType_t imageTask = xTaskCreatePinnedToCore(frameCaptureTask, "FrameCapture", 2048, NULL, 1, NULL, 0); // pin streaming task to Core 0
-    BaseType_t audioPlaybackTask = xTaskCreatePinnedToCore(speaker.audioTaskWrapper, "AudioPlayback", 2048, NULL, 1, NULL, 1); // pin audio playback task to Core 1
+    // create streaming task pinned to Core 0
+    BaseType_t res = xTaskCreatePinnedToCore(frameCaptureTask, "FrameCapture", 8192, NULL, 1, NULL, 0);
+    if (res != pdPASS) {
+        Serial.println("Failed to create FrameCapture task!");
+    }
 
     digitalWrite(onBoardLedPin, LOW); // turn on onboard LED to indicate ready state (logic is inverted as the onboard LED is active LOW)
     setResolution('h'); // start with high resolution
@@ -343,19 +417,15 @@ void loop() {
       frameReady = false;
     }
 
-    // handle incoming UDP data
+    // handle incoming UDP bytes
     int udpPacketSize = udpServer.parsePacket();
     if (udpPacketSize) {
       if(!computerDiscovered){
         handleUDPhandshake();
-      } else {
-        if(udpPacketSize > 4){
-          processUDPAudioData();
-        }
       }
     }
 
-    // check if laser sensor range is ready (non-blocking check)
+    // check if range is ready (non-blocking check)
     if (waitingForReading && lox.isRangeComplete() && distanceSensorBooted) {
       uint16_t dist_mm = lox.readRangeResult(); // last completed measurement
       waitingForReading = false;
@@ -375,9 +445,9 @@ void loop() {
           default:
             freq = 500;
         }
-        //buzzer.playFreq(freq, true);
+        playTone(freq, true);
       } else {
-        //buzzer.playFreq(4000, false);
+        playTone(4000, false);
       }
     }
 
@@ -388,17 +458,17 @@ void loop() {
     switch(touch1State){
       case 1: // single tap
         webSocketServer.broadcastTXT("$#TXT#$touch1_single");
-        //buzzer.playTone(Buzzer::TOUCH1_SINGLE);
+        playTone(500, true); delay(100); playTone(2000, true); delay(100); playTone(500, false);
         delay(500); // debounce delay
         break;
       case 2: // double tap
         webSocketServer.broadcastTXT("$#TXT#$touch1_double");
-        //buzzer.playTone(Buzzer::TOUCH1_DOUBLE);
+        playTone(1000, true); delay(100); playTone(3000, true); delay(100); playTone(1000, false);
         delay(500); // debounce delay
         break;
       case 3: // hold
         webSocketServer.broadcastTXT("$#TXT#$touch1_hold");
-        //buzzer.playTone(Buzzer::TOUCH1_HOLD);
+        playTone(1500, true); delay(300); playTone(1500, false);
         delay(500); // debounce delay
         break;
     }
@@ -406,20 +476,18 @@ void loop() {
     switch(touch2State){
       case 1: // single tap
         webSocketServer.broadcastTXT("$#TXT#$touch2_single");
-        //buzzer.playTone(Buzzer::TOUCH2_SINGLE);
+        playTone(2000, true); delay(100); playTone(500, true); delay(100); playTone(500, false);
         delay(500); // debounce delay
         break;
       case 2: // double tap
         webSocketServer.broadcastTXT("$#TXT#$touch2_double");
-        //buzzer.playTone(Buzzer::TOUCH2_DOUBLE);
+        playTone(3000, true); delay(100); playTone(1000, true); delay(100); playTone(1000, false);
         delay(500); // debounce delay
         break;
       case 3: // hold
         webSocketServer.broadcastTXT("$#TXT#$touch2_hold");
-        //buzzer.playTone(Buzzer::TOUCH2_HOLD);
+        playTone(2500, true); delay(300); playTone(2500, false);
         delay(500); // debounce delay
         break;
     }
-
-    vTaskDelay(1 / portTICK_PERIOD_MS); // gives esp32 some breathing space
 }
