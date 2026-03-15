@@ -59,6 +59,7 @@ const unsigned long sampleInterval = 50;
 bool waitingForReading = false; // flag to indicate if we're waiting for a sensor reading to be sent before taking another reading
 const int alertDistance = 100; // distance threshold in mm for alert
 bool distanceSensorBooted = false;
+bool wasAlerting = false; // tracks if the buzzer was active
 
 // Websocket server (port 9000)
 const int wsPort = 9000;
@@ -86,7 +87,9 @@ char currentRes = 'l'; // current resolution setting
 TouchSensor touch1(touch1Pin);
 TouchSensor touch2(touch2Pin);
 
-Speaker speaker;// speaker object
+// mic and speaker objects
+Speaker speaker(i2sClockPin, i2sChannelSelectPin, i2sSpeakerDataPin, 1.5);
+Microphone mic(i2sClockPin, i2sChannelSelectPin, i2sMicDataPin, 5.0);
 
 // camera init with safe XCLK + params
 void setupCamera() {
@@ -175,9 +178,17 @@ void toggleImageStreaming(bool toggle){
 // toggles audio streaming state
 void toggleMicAudioStreaming(bool toggle){
   if(toggle){
-    audioStreamingStarted = true;
+    speaker.lockI2Sport = true;  // stop the speaker task from trying to attach
+    speaker.detach();
+    
+    mic.attach(); 
+    mic.audioStreamingStarted = true;
   } else {
-    audioStreamingStarted = false;
+    mic.audioStreamingStarted = false; 
+    mic.detach();           
+    
+    speaker.attach();
+    speaker.lockI2Sport = false; // allow the speaker to automatically re-attach when needed
   }
 }
 
@@ -221,10 +232,16 @@ void handleUDPhandshake(){
     // fetch the computer's IP 
     computerIP = udpServer.remoteIP();
 
+    // consume the handshake payload to clear the buffer completely
+    while (udpServer.available()) {
+        udpServer.read();
+    }
+
     // send a response back to the detected IP
     udpServer.beginPacket(computerIP, imageStreamingPort);
     udpServer.print("receivedPacket");
     udpServer.endPacket();
+    computerDiscovered = true;
 }
 
 // stores audio samples got from server(computer) via UDP in the speaker.jitterBuffer
@@ -235,7 +252,7 @@ void processUDPAudioData() {
   // take only the samples by removing the 4-byte header(packet id)
   for (int i = 4; i < len - 1; i += 2) {
     int16_t sample = (pkt[i + 1] << 8) | pkt[i]; // each byte(8bit) of the pkt is only half of a full 16bit sample, so we glue the high and low bytes
-    int nextHead = (speaker.head + 1) % JITTER_BUFFER_SIZE;
+    int nextHead = (speaker.head + 1) % speaker.jitterBufferSize;
     if (nextHead != speaker.tail) { 
       speaker.jitterBuffer[speaker.head] = sample;
       speaker.head = nextHead;
@@ -261,6 +278,15 @@ void sendFrameUDP(camera_fb_t *fb){
         udpServer.endPacket();
     }
     delayMicroseconds(200);
+}
+
+// sends audio stream from mic via UDP
+void sendAudioUDP(int16_t* samples){
+    if (computerIP) { 
+        udpServer.beginPacket(computerIP, micAudioStreamingPort);
+        udpServer.write((uint8_t*)samples, mic.micBufferSize * 2); 
+        udpServer.endPacket();
+    }
 }
 
 // captures frames continuously and saves to latestFb
@@ -293,6 +319,7 @@ void setup() {
     Serial.begin(115200);
 
     setupCamera(); // initialize camera
+    speaker.attach();
 
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi
@@ -312,14 +339,15 @@ void setup() {
     if(lox.begin()){
       distanceSensorBooted = true;
     } else {
-      //buzzer.playTone(Buzzer::ERROR); // play error tone to indicate sensor failure
+      speaker.playTone(Speaker::ERROR); // play error tone to indicate sensor failure
     }
 
     webSocketServer.begin();
     webSocketServer.onEvent(webSocketEvent);
 
-    BaseType_t imageTask = xTaskCreatePinnedToCore(frameCaptureTask, "FrameCapture", 2048, NULL, 1, NULL, 0); // pin streaming task to Core 0
-    BaseType_t audioPlaybackTask = xTaskCreatePinnedToCore(speaker.audioTaskWrapper, "AudioPlayback", 2048, NULL, 1, NULL, 1); // pin audio playback task to Core 1
+    BaseType_t imageTask = xTaskCreatePinnedToCore(frameCaptureTask, "FrameCapture", 4096, NULL, 1, NULL, 0); // pin streaming task to Core 0
+    BaseType_t audioPlaybackTask = xTaskCreatePinnedToCore(speaker.speakerTaskWrapper, "AudioPlayback", 4096, &speaker, 1, NULL, 1); // pin audio playback task to Core 1
+    BaseType_t audioCaptureTask = xTaskCreatePinnedToCore(mic.micTaskWrapper, "AudioCapture", 4096, &mic, 1, NULL, 1); // pin audio playback task to Core 1
 
     digitalWrite(onBoardLedPin, LOW); // turn on onboard LED to indicate ready state (logic is inverted as the onboard LED is active LOW)
     setResolution('h'); // start with high resolution
@@ -328,8 +356,12 @@ void setup() {
 void loop() {
     // request distance reading at regular intervals
     unsigned long now = millis();
+    if(now > 8000 && now < 8050){
+      toggleMicAudioStreaming(true);
+      Serial.println("audio stream started");
+    }
     if (!waitingForReading && now - lastRequestTime >= sampleInterval && distanceSensorBooted) {
-      if (lox.startRange()) {      // non-blocking start
+      if (lox.startRange()) { // non-blocking start
         lastRequestTime = now;
         waitingForReading = true;
       }
@@ -355,12 +387,19 @@ void loop() {
       }
     }
 
+    // send audio samples from mic if they are ready
+    if(mic.audioSamplesReady){
+      sendAudioUDP(mic.micSamples);
+      mic.audioSamplesReady = false;
+    }
+
     // check if laser sensor range is ready (non-blocking check)
     if (waitingForReading && lox.isRangeComplete() && distanceSensorBooted) {
       uint16_t dist_mm = lox.readRangeResult(); // last completed measurement
       waitingForReading = false;
 
       if (dist_mm > 0 && dist_mm < alertDistance) {
+        wasAlerting = true; // mark that we are currently alerting
         int freq;
         switch(dist_mm) {
           case 0 ... 40:
@@ -375,9 +414,13 @@ void loop() {
           default:
             freq = 500;
         }
-        //buzzer.playFreq(freq, true);
+        speaker.playFreq(freq, true);
       } else {
-        //buzzer.playFreq(4000, false);
+        // only clear the buffer if we were previously alerting
+        if (wasAlerting) {
+            speaker.playFreq(4000, false);
+            wasAlerting = false; // reset the state
+        }
       }
     }
 
@@ -385,20 +428,24 @@ void loop() {
     int touch1State = touch1.getTouchState();
     int touch2State = touch2.getTouchState();
 
+    // temporarily disabling touch sensors for testing
+    touch1State = 0;
+    touch2State = 0;
+
     switch(touch1State){
       case 1: // single tap
         webSocketServer.broadcastTXT("$#TXT#$touch1_single");
-        //buzzer.playTone(Buzzer::TOUCH1_SINGLE);
+        speaker.playTone(Speaker::TOUCH1_SINGLE);
         delay(500); // debounce delay
         break;
       case 2: // double tap
         webSocketServer.broadcastTXT("$#TXT#$touch1_double");
-        //buzzer.playTone(Buzzer::TOUCH1_DOUBLE);
+        speaker.playTone(Speaker::TOUCH1_DOUBLE);
         delay(500); // debounce delay
         break;
       case 3: // hold
         webSocketServer.broadcastTXT("$#TXT#$touch1_hold");
-        //buzzer.playTone(Buzzer::TOUCH1_HOLD);
+        speaker.playTone(Speaker::TOUCH1_HOLD);
         delay(500); // debounce delay
         break;
     }
@@ -406,17 +453,17 @@ void loop() {
     switch(touch2State){
       case 1: // single tap
         webSocketServer.broadcastTXT("$#TXT#$touch2_single");
-        //buzzer.playTone(Buzzer::TOUCH2_SINGLE);
+        speaker.playTone(Speaker::TOUCH2_SINGLE);
         delay(500); // debounce delay
         break;
       case 2: // double tap
         webSocketServer.broadcastTXT("$#TXT#$touch2_double");
-        //buzzer.playTone(Buzzer::TOUCH2_DOUBLE);
+        speaker.playTone(Speaker::TOUCH2_DOUBLE);
         delay(500); // debounce delay
         break;
       case 3: // hold
         webSocketServer.broadcastTXT("$#TXT#$touch2_hold");
-        //buzzer.playTone(Buzzer::TOUCH2_HOLD);
+        speaker.playTone(Speaker::TOUCH2_HOLD);
         delay(500); // debounce delay
         break;
     }
