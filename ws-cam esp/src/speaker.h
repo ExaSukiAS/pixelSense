@@ -1,7 +1,5 @@
-// handles touch sensors, buzzer, speaker and microphone
-
-#ifndef PERIPHERALS_H
-#define PERIPHERALS_H
+#ifndef SPEAKER_H
+#define SPEAKER_H
 
 #include <Arduino.h>
 #include <math.h>
@@ -30,6 +28,9 @@ class Speaker{
         bool attachState = false; // flag to indicate if speaker is attached or not
 
         volatile bool lockI2Sport = false; // locks teh speaker I2S port so that there's no conflict when using the mic
+
+        uint32_t lastSampleTime = 0;
+        const uint32_t streamTimeout = 300;
 
         enum ToneType {
             TOUCH1_SINGLE, TOUCH1_DOUBLE, TOUCH1_HOLD,
@@ -97,6 +98,17 @@ class Speaker{
                     continue;
                 }
 
+                if ((millis() - lastSampleTime) > streamTimeout) {
+                    // no audio stream for 300ms
+                    i2s_zero_dma_buffer(I2S_PORT);
+
+                    isBuffering = true;
+                    head = tail;   // clear software buffer
+
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                    continue;
+                }
+
                 int available = (head - tail + jitterBufferSize) % jitterBufferSize; // number of available samples
 
                 // determine whether to play the audio or wait for enough samples
@@ -158,6 +170,8 @@ class Speaker{
                 
                 jitterBuffer[head] = sample;
                 head = (head + 1) % jitterBufferSize;
+
+                lastSampleTime = millis();   // update last audio arrival time
             }
         }
 
@@ -206,203 +220,6 @@ class Speaker{
                     break;
             }
         }
-};
-
-class Microphone{
-    private:
-        // I2S pins
-        int channelPin;
-        int clockPin;
-        int dataPin;
-
-        #define I2S_PORT I2S_NUM_1 
-
-        const uint32_t samplingRate = 8000;
-        float gain = 1;
-    public:
-        static const uint16_t micBufferSize = 128;
-        int16_t micSamples[micBufferSize]; // stores the audio samples to send via UDP
-
-        bool audioStreamingStarted = false; // flag for audio streaming state
-        bool audioSamplesReady = false; //  flag to determine whether audio samples are reday to send
-
-        bool attachState = false; // flag to indicate if mic is attached or not
-
-        // constructor
-        Microphone(int SCKpin, int WSpin, int SDpin, float amplificationGain){
-            channelPin = WSpin;
-            clockPin = SCKpin;
-            dataPin = SDpin;
-
-            gain = amplificationGain;
-        }
-        
-        // attaches mic
-        void attach(){
-            if (attachState) return;
-
-            const i2s_config_t i2s_config = {
-                .mode = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX),
-                .sample_rate = samplingRate,
-                .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-                .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
-                .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
-                .intr_alloc_flags = 0,
-                .dma_buf_count = 8,
-                .dma_buf_len = 128,
-                .use_apll = false
-            };
-            const i2s_pin_config_t pin_config = {
-                .bck_io_num = clockPin,
-                .ws_io_num = channelPin,
-                .data_out_num = -1,
-                .data_in_num = dataPin
-            };
-            
-            i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
-            i2s_set_pin(I2S_PORT, &pin_config);
-            i2s_start(I2S_PORT);
-            delay(50);
-            attachState = true;
-        }
-
-        // detaches mic so that the clock and channel select pin can be used by an another I2S device
-        void detach(){
-            if(!attachState) return;
-
-            i2s_stop(I2S_PORT);
-            i2s_driver_uninstall(I2S_PORT);
-            attachState = false;
-        }
-
-        // used so that we can run audioCaptureTask() as a saperate task
-        static void micTaskWrapper(void *param) {
-            Microphone* self = (Microphone*)param;
-            self->audioCaptureTask();
-        }
-
-        // captures audio samples from teh microphone
-        void audioCaptureTask(){
-            int sampleCount = 0;
-            float filteredValue = 0;
-            int16_t lastRaw = 0;
-
-            for(;;){
-                if(!audioStreamingStarted){
-                    sampleCount = 0;
-                    vTaskDelay(10);
-                    continue;
-                }
-                if(audioSamplesReady){
-                    vTaskDelay(1);
-                    continue;
-                }
-
-                if(!attachState) attach();
-
-                size_t bytesIn = 0;
-                int16_t rawBuffer[64]; 
-                esp_err_t result = i2s_read(I2S_PORT, &rawBuffer, sizeof(rawBuffer), &bytesIn, portMAX_DELAY);
-
-                if (result == ESP_OK && bytesIn > 0) {
-                    int samplesRead = bytesIn / 2; 
-
-                    for (int i = 0; i < samplesRead; i++) {
-                        filteredValue = 0.99 * (filteredValue + (float)rawBuffer[i] - (float)lastRaw); // high-pass filter to remove DC offset
-                        float boostedValue = filteredValue * gain; // amplify
-
-                        // clamp
-                        if (boostedValue > 32767) boostedValue = 32767;
-                        if (boostedValue < -32768) boostedValue = -32768;
-                        lastRaw = rawBuffer[i];
-
-                        micSamples[sampleCount] = (int16_t)boostedValue;
-                        
-                        sampleCount++;
-
-                        if (sampleCount >= micBufferSize) {
-                            audioSamplesReady = true;
-                            sampleCount = 0; 
-                            break; 
-                        }
-                    }
-                }
-            }
-        }
-};
-
-// Touch sensor class with single tap, double tap and hold detection
-class TouchSensor{
-  private:
-    int pin;
-    unsigned long lastChangeTime = 0;
-    unsigned long touchStart = 0;
-    unsigned long lastTapTime = 0;      // time of last release
-    unsigned long pendingTapTime = 0;   // time we started waiting for a possible double-tap
-    bool lastTouched = false;
-    bool pendingSingleTap = false;
-
-    const unsigned long doubleTapWindow = 300; 
-    const unsigned long holdWindow = 500;     
-  public:
-    // constructor to initialize touch sensor pin
-    TouchSensor(int touchPin) {
-      pinMode(touchPin, INPUT_PULLUP);
-      pin = touchPin;
-    }
-
-    // Reads touch sensors
-    bool readTouch() {
-        // Read the touch sensor multiple times to get a more stable reading
-        const int numReadings = 5;  
-        int totalScore = 0;     
-        for (int i = 0; i < numReadings; i++) {
-            totalScore += digitalRead(pin);
-        }
-        float score = 1 - (totalScore / (float)numReadings);  
-
-        return (score > 0.7); // Return true if the score is above threshold (considered pressed)
-    }
-
-    // Call frequently from loop(). Returns:
-    // 0 = no event
-    // 1 = single tap (emitted after doubleTapWindow expires without second tap)
-    // 2 = double tap
-    // 3 = hold (touch lasted >= holdWindow)
-    int getTouchState() {
-      unsigned long now = millis();
-      bool touched = readTouch();
-
-      // detect state changes
-      if (touched != lastTouched) {
-        lastChangeTime = now;
-        if (touched) {
-          touchStart = now; // touch started
-        } else {
-          if (pendingSingleTap && (now - pendingTapTime) <= doubleTapWindow) { // double tap detection
-            pendingSingleTap = false;
-            lastTouched = touched;
-            return 2;
-          } else {
-            pendingSingleTap = true;
-            pendingTapTime = now;
-          }
-        }
-      } else if (touched && (now - touchStart) >= holdWindow) { // hold detection
-        lastTouched = false;
-        pendingSingleTap = false;
-        return 3;
-      }
-
-      if (pendingSingleTap && (now - pendingTapTime) > doubleTapWindow) { // single tap detection
-        pendingSingleTap = false;
-        lastTouched = touched;
-        return 1;
-      }
-
-      lastTouched = touched;
-      return 0;
-    }
 };
 
 #endif
