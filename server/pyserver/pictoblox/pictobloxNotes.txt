@@ -14,4 +14,4 @@ Run cmd as administrator, run:
 cd C:\Program Files\PictoBlox\resources\arduino-1.8.5\hardware\espressif\esp32\tools
 Then, run get.exe
 
-If error is shown, enable long file name.
+If error is shown, enable long file name for terminal.

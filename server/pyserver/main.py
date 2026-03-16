@@ -5,12 +5,12 @@ import re
 from termcolor import colored
 from esp32Handler import ESP32WebSocket
 from gemini import GeminiClient
-from voice import Voice
+from audio import Voice
 from tracker import Tracker
 from UIhandler import GUI
 
 # gemini configuration
-geminiKeyToUse = "2"
+geminiKeyToUse = "1"
 
 currentMode = None # current mode (.freeform, .coord, .txt_rec, .img_des, .obj_dtc, streaming, None)
 currentImage = None
@@ -134,7 +134,7 @@ def espMessageHandler(message):
         esp.requestCapture("captureHigh")
     elif message == "$#TXT#$touch2_hold":
         guiServer.sendMessage("activate", "terminateTask")
-        esp.requestCapture("stopStream")
+        esp.requestCapture("stopImageStream")
 
 # handles images from esp32 
 lastSendTime = 0
@@ -248,12 +248,13 @@ def onGUIclientMessage(message):
 
     elif message == ".coord":
         currentMode = message
-        esp.requestCapture("startStream")
+        esp.requestCapture("startImageStream")
         guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
         guiServer.sendMessage("loader", "15")
         guiServer.sendMessage("log", "Fetching image...")
 
     elif message == 'terminate':
+        esp.stopAudioStream()
         voiceServer.stopUttering()
 
         # reset variables and objects
@@ -264,20 +265,20 @@ def onGUIclientMessage(message):
         tracker = None
 
         if coordRunning:
-            esp.requestCapture("stopStream")
+            esp.requestCapture("stopImageStream")
 
         coordRunning = False
 
         print(colored("All processes terminated.", "yellow"))
 
 
-    elif message == 'startStream':
+    elif message == 'startImageStream':
         currentMode = "streaming"
-        esp.requestCapture("startStream")
+        esp.requestCapture("startImageStream")
 
-    elif message == 'stopStream':
+    elif message == 'stopImageStream':
         currentMode = None
-        esp.requestCapture("stopStream")
+        esp.requestCapture("stopImageStream")
 
 # --------------- Main user feature functions ---------------
 
@@ -290,6 +291,8 @@ async def executeFreeform():
 
     guiServer.sendMessage("loader", "70")
     guiServer.sendMessage("log", f"User said: {voiceContent}")
+
+    esp.startAudioStream()
 
     geminiClientFast.generateContentStream(AIistructions[currentMode], voiceContent, currentImage)
 
@@ -309,12 +312,15 @@ async def executeCoordination():
     return
 
 def executeTextRecognition():
+    esp.startAudioStream()
     geminiClientFast.generateContentStream(AIistructions[currentMode], "What is written here?", currentImage)
 
 def executeObjectDetection():
+    esp.startAudioStream()
     geminiClientFast.generateContentStream(AIistructions[currentMode], "What are the objects in this image?", currentImage)
 
 def executeImageDescription():
+    esp.startAudioStream()
     geminiClientFast.generateContentStream(AIistructions[currentMode], "Describe this image.", currentImage)
 
 
