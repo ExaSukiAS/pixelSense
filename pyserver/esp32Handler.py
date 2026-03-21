@@ -128,7 +128,7 @@ class ESP32WebSocket:
                             channels=2,
                             rate=inputRate,
                             input=True,
-                            input_device_index=11,
+                            input_device_index=22,
                             frames_per_buffer=packetSize)
             
             packet_id = 0

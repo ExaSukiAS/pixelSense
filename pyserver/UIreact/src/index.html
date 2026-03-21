@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixelsense Dashboard</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="top-bar">
+        <div class="top-bar__brand">
+            <span class="logo-text">Pixelsense</span>
+            
+            <div class="status-indicators">
+                <div class="status-badge">
+                    <span class="indicator tertiary"></span>
+                    <span class="label">ESP32</span>
+                </div>
+                <div class="status-badge">
+                    <span class="indicator primary"></span>
+                    <span class="label">VOICE</span>
+                </div>
+                <div class="status-badge">
+                    <span class="indicator tertiary"></span>
+                    <span class="label">SERVER</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="top-bar__actions">
+            <button class="btn btn-primary">
+                <span class="material-symbols-outlined icon">videocam</span> Start Stream
+            </button>
+            <button class="btn btn-tertiary">
+                <span class="material-symbols-outlined icon">mic</span> Audio
+            </button>
+            <button class="btn btn-error">
+                <span class="material-symbols-outlined icon">cancel</span> Terminate
+            </button>
+        </div>
+    </header>
+
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="telemetry-card">
+                <span class="material-symbols-outlined bg-icon">query_stats</span>
+                <h3>Device Telemetry</h3>
+                <div class="telemetry-list">
+                    <div class="telemetry-item">
+                        <span class="label">TOF distance</span>
+                        <span class="value primary">22cm</span>
+                    </div>
+                    <div class="telemetry-item">
+                        <span class="label">Frame Latency</span>
+                        <span class="value tertiary">14ms</span>
+                    </div>
+                    <div class="telemetry-item">
+                        <span class="label">WIFI Signal</span>
+                        <span class="value primary">-54dBm</span>
+                    </div>
+                </div>
+            </div>
+            <div class="resource-card">
+                <div class="card-label">ESP32 CPU Usage</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 42%;"></div>
+                </div>
+                <div class="card-stats">
+                    <span>240MHz</span>
+                    <span>42%</span>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <div class="dashboard-grid">
+                <div class="grid-primary">
+                    <div class="video-feed">
+                        <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuD6cXhOjtNpT0VVkjfZvNPUwaJftfDz5wm_WbYgwcylT6T3wK45TaRlMXKHNTnGCQ7VTP-cURxfEMv3RTb1nbGnZoaRwl_-N5GxJc0gtB85nx1IQL1FjIw5vg2PX92YiYROROZTZZ4xzmlRV8H_960ghiwhmmn6B-Lkqo24Vf7eSThKSfdJvnIKB3Rrb7IeL1LfDT1-bvzJztMOEa8P4mxre9MNGtGYMjanT_FsmDiJyu2nA6a-xEqjmNaqjWT9VBGvzIkbzEpop0I" alt="Live technical feed" class="feed-image">
+                        <div class="feed-overlay">
+                            <div class="live-badge">
+                                <span class="pulse-dot live"></span>
+                                <span>LIVE FEED</span>
+                            </div>
+                            <div class="stream-stats">
+                                1080P | 60FPS
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="log-panel">
+                        <div class="panel-header">
+                            <span class="material-symbols-outlined">auto_awesome</span>
+                            <h3>Inference Log & AI response</h3>
+                        </div>
+                        <div class = logs>
+                            <div class = "loader"></div>
+                            <div class = "log-content">
+                                Fetching image
+                            </div>
+                        </div>
+                        <span class="panel-content">
+
+                        </span>
+                    </div>
+                </div>
+
+                <div class="grid-secondary">
+                    <div class="matrix-card">
+                        <h3>Feature Control Matrix</h3>
+                        <div class="button-grid">
+                            <button class="matrix-btn active">
+                                <span class="material-symbols-outlined">text_fields</span>
+                                <span>Text Recognition</span>
+                            </button>
+                            <button class="matrix-btn">
+                                <span class="material-symbols-outlined">target</span>
+                                <span>Object Detection</span>
+                            </button>
+                            <button class="matrix-btn">
+                                <span class="material-symbols-outlined">image_search</span>
+                                <span>Image Desc</span>
+                            </button>
+                            <button class="matrix-btn">
+                                <span class="material-symbols-outlined">draw</span>
+                                <span>Freeform</span>
+                            </button>
+                            <button class="matrix-btn">
+                                <span class="material-symbols-outlined">account_tree</span>
+                                <span>Coordination</span>
+                            </button>
+                            <button class="matrix-btn">
+                                <span class="material-symbols-outlined">chat</span>
+                                <span>AI Chat</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
