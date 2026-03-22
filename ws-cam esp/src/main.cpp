@@ -9,6 +9,7 @@
 #include "mic.h"
 #include "touchSensor.h"
 #include "camera.h"
+#include "resourceMonitor.h"
 
 // to disable brownout detector
 #include "soc/soc.h" 
@@ -50,6 +51,7 @@ bool waitingForReading = false; // flag to indicate if we're waiting for a senso
 const int alertDistance = 100; // distance threshold in mm for alert
 bool distanceSensorBooted = false;
 bool wasAlerting = false; // tracks if the buzzer was active
+uint16_t dist_mm = 0; // current distance reading from TOF sensor
 
 // Websocket server (port 9000)
 const int espWSport = 9000;
@@ -58,11 +60,17 @@ WebSocketsServer webSocketServer(espWSport);
 // UDP server
 const int espUDPport = 9001; // UDP port of esp32
 IPAddress computerIP;
-const uint16_t computerImgAndHandshakePort = 5005; // port of the server(computer) at which images will be streamed and handshake will be executed
+const uint16_t computerImgPort = 5005; // port of the server(computer) at which images will be streamed
 const uint16_t computerMicPort = 5006; // port of the server(computer) at which audio samples from microphone will be streamed
+const uint16_t computerMsgPort = 5007; // port the teh server(computer) at which general messages (distance from TOF sensor and esp32 resource usage)
 bool computerDiscovered = false;
 const uint32_t imageStreamPktSize = 1400;
 WiFiUDP udpServer;
+
+ResourceMonitor resMon;
+int generalMsg[6];
+const unsigned long udpMsgSendingInterval = 500; 
+unsigned long lastUDPmsgTime = 0;
 
 // toggles image streaming state
 void toggleImageStreaming(bool toggle){
@@ -94,6 +102,11 @@ void toggleMicAudioStreaming(bool toggle){
 // commands: captureHigh, captureLow, startImageStream, stopImageStream, startAudioStream, stopAudioStream
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch (type) {
+    case WStype_CONNECTED:
+      // get the IP address of the connected client (the computer)
+      computerIP = webSocketServer.remoteIP(num);
+      computerDiscovered = true;
+      break;
     case WStype_TEXT:
       if (String((char*)payload) == "captureHigh") {
         if(camera.currentRes != 'h'){
@@ -129,23 +142,6 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
-// handle handshake with computer via UDP
-void handleUDPhandshake(){
-    // fetch the computer's IP 
-    computerIP = udpServer.remoteIP();
-
-    // consume the handshake payload to clear the buffer completely
-    while (udpServer.available()) {
-        udpServer.read();
-    }
-
-    // send a response back to the detected IP
-    udpServer.beginPacket(computerIP, computerImgAndHandshakePort);
-    udpServer.print("receivedPacket");
-    udpServer.endPacket();
-    computerDiscovered = true;
-}
-
 // stores audio samples got from server(computer) via UDP in the speaker.jitterBuffer
 void processUDPAudioData() {
   uint8_t pkt[1024]; // received packet
@@ -174,7 +170,7 @@ void sendFrameUDP(camera_fb_t *fb){
             chunk = fb->len - offset;
         }
 
-        udpServer.beginPacket(computerIP, computerImgAndHandshakePort);
+        udpServer.beginPacket(computerIP, computerImgPort);
         udpServer.write((uint8_t*)&frameID, 2);
         udpServer.write((uint8_t*)&offset, 4);
         udpServer.write(fb->buf + offset, chunk);
@@ -190,6 +186,16 @@ void sendAudioUDP(int16_t* samples){
         udpServer.write((uint8_t*)samples, mic.micBufferSize * 2); 
         udpServer.endPacket();
     }
+}
+
+// sends general system stats and TOF distance via UDP
+void sendGeneralMsgUDP(){
+  resMon.getInfo(generalMsg); // fills index 0-4
+  generalMsg[5] = dist_mm; // fills index 5 (Distance)
+
+  udpServer.beginPacket(computerIP, computerMsgPort);
+  udpServer.write((uint8_t*)generalMsg, sizeof(generalMsg)); 
+  udpServer.endPacket();
 }
 
 void setup() {
@@ -235,14 +241,19 @@ void setup() {
 
 void loop() {
     webSocketServer.loop();
+    unsigned long now = millis();
 
     // request distance reading at regular intervals
-    unsigned long now = millis();
     if (!waitingForReading && now - lastRequestTime >= sampleInterval && distanceSensorBooted) {
       if (lox.startRange()) {
         lastRequestTime = now;
         waitingForReading = true;
       }
+    }
+
+    if(now - lastUDPmsgTime >= udpMsgSendingInterval){
+      sendGeneralMsgUDP();
+      lastUDPmsgTime = now;
     }
 
     // handle image streaming
@@ -255,12 +266,8 @@ void loop() {
     // handle incoming UDP data
     int udpPacketSize = udpServer.parsePacket();
     if (udpPacketSize) {
-      if(!computerDiscovered){
-        handleUDPhandshake();
-      } else {
-        if(udpPacketSize > 4){
-          processUDPAudioData();
-        }
+      if(computerDiscovered && udpPacketSize > 4){
+        processUDPAudioData();
       }
     }
 
@@ -272,7 +279,7 @@ void loop() {
 
     // check if laser sensor range is ready (non-blocking check)
     if (waitingForReading && lox.isRangeComplete() && distanceSensorBooted) {
-      uint16_t dist_mm = lox.readRangeResult(); // last completed measurement
+      dist_mm = lox.readRangeResult(); // last completed measurement
       waitingForReading = false;
 
       if (dist_mm > 0 && dist_mm < alertDistance) {
