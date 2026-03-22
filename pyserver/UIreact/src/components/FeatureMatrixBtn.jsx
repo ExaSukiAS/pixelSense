@@ -20,7 +20,7 @@ export const FeatureMatrix = ({featureButtons, onClick}) =>{
         <div className="button-grid">
             {titles.map((title) => {
                 const button = featureButtons[title];
-                return(<Button icon={button.icon} text={title} isActive={button.isActive} onClick={onClick} key={button.title}></Button>)
+                return(<Button icon={button.icon} text={title} isActive={button.isActive} onClick={onClick} key={title}></Button>)
             })}
         </div>
     )

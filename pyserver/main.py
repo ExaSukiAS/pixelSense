@@ -58,11 +58,11 @@ fullResponse = ""
 def fastGeminiResponseHandler(responseChunk):
     global fullResponse
     if responseChunk == "#$$#": # detect end of stream
-        guiServer.sendMessage("loader", "100")
+        guiServer.sendMessage("loader", "")
         guiServer.sendMessage("log", fullResponse)
         fullResponse = ""
         return 
-    guiServer.sendMessage("loader", "80")
+    guiServer.sendMessage("loader", "80@#$@Parsing Gemini content stream")
     guiServer.sendMessage("log", fullResponse)
     # sanitizes text for Text-to-Speech by removing markdown formatting, emojis, and unwanted symbols
     def sanitize_for_tts(text):
@@ -80,8 +80,7 @@ coordResponse = "" # gemini stream chunk accumulator
 def coordGeminiResponseHandler(responseChunk):
     global coordResponse
     if responseChunk == "#$$#": # detect end of stream
-        guiServer.sendMessage("loader", "85")
-        guiServer.sendMessage("log", "Initializing object and hand tracker models...")
+        guiServer.sendMessage("loader", "85@#$@Initializing object and hand tracker models")
 
         cleanCoordinates = re.sub(r'^```json\n|```$', '', coordResponse) # sanitize coordinates
         coordResponse = ""
@@ -95,10 +94,10 @@ def coordGeminiResponseHandler(responseChunk):
         tracker = Tracker(currentImage, initialObjRIO_norm, trackerConfidenceThreshold, False)
         global trackerInitialized
         trackerInitialized = True
-        guiServer.sendMessage("loader", "100")
+        guiServer.sendMessage("loader", "")
     else:
         coordResponse += responseChunk
-        guiServer.sendMessage("loader", "70")
+        guiServer.sendMessage("loader", "70@#$@Fetching initial object coordinates")
     return
 
 # --------------- ESP32 functions ---------------
@@ -136,6 +135,21 @@ def espMessageHandler(message):
         guiServer.sendMessage("activate", "terminateTask")
         esp.requestCapture("stopImageStream")
 
+def espStatsHandler(stats):
+    # stats[0]-stats[2] = Used SRAM
+    # stats[1]-stats[3] = Used PSRAM
+    used_stats = [
+        stats[0],            # Total SRAM
+        stats[1],            # Total PSRAM
+        stats[0] - stats[2], # Used SRAM
+        stats[1] - stats[3], # Used PSRAM
+        stats[4],            # CPU MHz
+        stats[5]             # Distance
+    ]
+    # convert the new list to a comma-separated string
+    stats_string = ",".join(map(str, used_stats))
+    guiServer.sendMessage("stats", stats_string)
+
 # handles images from esp32 
 lastSendTime = 0
 def espImageHandler(image):
@@ -150,28 +164,23 @@ def espImageHandler(image):
     guiServer.sendMessage("IMG", image)
 
     if currentMode == ".freeform":
-        guiServer.sendMessage("loader", "40")
-        guiServer.sendMessage("log", "Waiting for user input...")
+        guiServer.sendMessage("loader", "40@#$@Waiting for user prompt")
         if voiceServer.loop:
             asyncio.run_coroutine_threadsafe(executeFreeform(), voiceServer.loop) # run in the same asyncio loop as voiceServer
     elif currentMode == ".txt_rec":
-        guiServer.sendMessage("loader", "60")
-        guiServer.sendMessage("log", "Waiting for gemini to respond...")
+        guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
         executeTextRecognition()
     elif currentMode == ".obj_dtc":
-        guiServer.sendMessage("loader", "60")
-        guiServer.sendMessage("log", "Waiting for gemini to respond...")
+        guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
         executeObjectDetection()
     elif currentMode == ".img_des":
-        guiServer.sendMessage("loader", "60")
-        guiServer.sendMessage("log", "Waiting for gemini to respond...")
+        guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
         executeImageDescription()
 
     if not coordRunning:
         if currentMode == ".coord":
             coordRunning = True
-            guiServer.sendMessage("loader", "30")
-            guiServer.sendMessage("log", "Waiting for user input...")
+            guiServer.sendMessage("loader", "30@#$@Waiting for user prompt")
 
             if voiceServer.loop:
                 asyncio.run_coroutine_threadsafe(executeCoordination(), voiceServer.loop) # run in the same asyncio loop as voiceServer
@@ -243,15 +252,13 @@ def onGUIclientMessage(message):
         currentMode = message
         esp.requestCapture("captureHigh")
         guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
-        guiServer.sendMessage("loader", "20")
-        guiServer.sendMessage("log", "Fetching image...")
+        guiServer.sendMessage("loader", "20@#$@Fetching image")
 
     elif message == ".coord":
         currentMode = message
         esp.requestCapture("startImageStream")
         guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
-        guiServer.sendMessage("loader", "15")
-        guiServer.sendMessage("log", "Fetching image...")
+        guiServer.sendMessage("loader", "15@#$@Fetching image")
 
     elif message == 'terminate':
         esp.stopAudioStream()
@@ -289,8 +296,7 @@ async def executeFreeform():
 
     print(colored(f"User said: {voiceContent}", "blue"))
 
-    guiServer.sendMessage("loader", "70")
-    guiServer.sendMessage("log", f"User said: {voiceContent}")
+    guiServer.sendMessage("loader", f"70@#$@User said: {voiceContent}")
 
     esp.startAudioStream()
 
@@ -305,8 +311,7 @@ async def executeCoordination():
     global trackedObjName
     trackedObjName = voiceContent
 
-    guiServer.sendMessage("loader", "60")
-    guiServer.sendMessage("log", f"Getting initial coordinates of hand and {voiceContent}...")
+    guiServer.sendMessage("loader", f"60@#$@Getting initial coordinates of hand and {voiceContent}")
 
     geminiClientCoord.generateContentStream(AIistructions[currentMode], voiceContent, currentImage)
     return
@@ -329,7 +334,7 @@ geminiClientFast = GeminiClient(geminiAPIkey, "gemini-2.5-flash-lite", onContent
 geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.5-flash", onContentChunk=coordGeminiResponseHandler)
 
 # start esp32 websocket client
-esp = ESP32WebSocket(onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler)
+esp = ESP32WebSocket(onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onStats=espStatsHandler)
 esp.start()
 
 # start voice server
