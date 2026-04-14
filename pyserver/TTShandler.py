@@ -2,6 +2,8 @@ import pyaudio
 from piper import PiperVoice
 import threading
 import queue
+import numpy as np
+from scipy import signal
 
 class TTS:
     def __init__(self, onAudioSamples=None, onSynthComplete=None):
@@ -21,6 +23,8 @@ class TTS:
         self.workerThread = threading.Thread(target=self._worker, daemon=True)
         self.workerThread.start()
 
+        self.samplingRate = 12000 
+
     def queueTextForSynth(self, textChunk: str):
         self.textQueue.put(textChunk)
 
@@ -32,24 +36,30 @@ class TTS:
             
             self._processSynthesis(text)
             
-            # signal that this item is done
             self.textQueue.task_done()
             
             # check if queue is empty to trigger completion callback
             if self.textQueue.empty() and self.onSynthComplete:
                 self.onSynthComplete()
 
-    def _processSynthesis(self, text):
+    def _processSynthesis(self, text):        
         for chunk in self.voice.synthesize(text):
+            audioData = np.frombuffer(chunk.audio_int16_bytes, dtype=np.int16)
+            
+            numSamples = int(len(audioData) * self.samplingRate / chunk.sample_rate)
+            resampledAudio = signal.resample(audioData, numSamples).astype(np.int16)
+            
+            resampled_bytes = resampledAudio.tobytes()
+
             if self.onAudioSamples:
-                self.onAudioSamples(chunk.audio_int16_bytes)
+                self.onAudioSamples(resampled_bytes)
 
             if self.playAudio:
                 if self.stream is None:
                     self.stream = self.pa.open(
                         format=self.pa.get_format_from_width(chunk.sample_width),
                         channels=chunk.sample_channels,
-                        rate=chunk.sample_rate,
+                        rate=self.samplingRate, 
                         output=True
                     )
-                self.stream.write(chunk.audio_int16_bytes)
+                self.stream.write(resampled_bytes)

@@ -4,11 +4,10 @@ import threading
 import socket
 import struct
 import numpy as np
-import pyaudio
-import audioop
+import queue
 import time
 
-class ESP32WebSocket:
+class ESP32:
     def __init__(self, onConnect=None, onMessage=None, onImage=None, onStats=None):
         self.espIP = "192.168.68.106"
         self.espWsPort = 9000
@@ -34,6 +33,9 @@ class ESP32WebSocket:
         self.ws = None
         self.imgUDP = None
         self.statsUDP = None
+
+        self.audioSampleQueue = queue.Queue()
+        self.espSpeakerSamplingRate = 12000
 
         self.loop = None  
 
@@ -69,7 +71,7 @@ class ESP32WebSocket:
         print("Connection not ready for capture request.")
         return False
     
-    def imgListener(self):
+    def _imgListener(self):
         self.imgUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.imgUDP.bind(("0.0.0.0", self.imageReceivingPort))
 
@@ -98,7 +100,7 @@ class ESP32WebSocket:
                     del buffers[frameID]
     
     # listen for stats data(CPU usage, memory usage) from ESP32 and forward to callback
-    def statsUDPlistener(self):
+    def _statsUDPlistener(self):
         self.statsUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.statsUDP.bind(("0.0.0.0", self.statsReceivingPort))
 
@@ -110,75 +112,52 @@ class ESP32WebSocket:
                 if self.onStats:
                     self.onStats(stats)
     
-    def handleTextQueue(self):
-        return
-
-    def streamAudio(self, samples):
-        return
+    def queueSamplesForStream(self, samples):
+        self.audioSampleQueue.put(samples)
     
-    """
-    This function will not be used. Only use the data sending structure as a reference for how to send audio data to ESP32.
-    def streamSystemAudio(self):
+    def _handleAudioSampleQueue(self):
+        while True:
+            samples = self.audioSampleQueue.get()
+            if samples is None: break
+
+            self._streamAudio(samples)
+
+            self.audioSampleQueue.task_done()
+
+    def _streamAudio(self, samples):
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # initialize PyAudio
-        p = pyaudio.PyAudio()
+        
+        # 1000 bytes = 500 samples
+        packetSize = 1000 
+        
+        # calculate exactly how much audio time is in one packet
+        # 500 samples / 12000 samples per second = ~0.04166 seconds
+        packet_duration = (packetSize / 2) / self.espSpeakerSamplingRate 
+        packet_id = 0
+        startTime = time.time()
 
-        inputRate = 48000
-        targetRate = 12000
-        packetSize = 1000
-        gain = 1.0
-        audioDeviceIndex = 22
-
-        print(f"Using audio output device {p.get_device_info_by_index(audioDeviceIndex)['name']} at index{audioDeviceIndex}")
-
-        while True: 
-            if not self.audioRunning:
-                time.sleep(0.1)
-                continue  
+        for i in range(0, len(samples), packetSize):
+            packet = samples[i:i+packetSize]
             
-            # state for the rate converter
-            state = None
-
-            self.audioStream = p.open(format=pyaudio.paInt16,
-                            channels=2,
-                            rate=inputRate,
-                            input=True,
-                            input_device_index=audioDeviceIndex,
-                            frames_per_buffer=packetSize)
+            # create the 4-byte header
+            data = struct.pack("I", packet_id) + packet
+            udp.sendto(data, (self.espIP, self.espUDPport))
+            packet_id += 1
             
-            packet_id = 0
-            while self.audioRunning:
-                pcm_data = self.audioStream.read(packetSize, exception_on_overflow=False) # raw PCM from Windows (Stereo, 48kHz)
-                mono_data = audioop.tomono(pcm_data, 2, 1, 0) # convert stereo to mono
-                
-                # downsample from 48000 to 12000
-                downsampled_data, state = audioop.ratecv(
-                    mono_data, 2, 1, inputRate, targetRate, state
-                )
+            expectedTime = startTime + (packet_id * packet_duration)
+            sleepTime = expectedTime - time.time()
             
-                amplified_data = audioop.mul(downsampled_data, 2, gain) # apply gain
-                
-                # package and send
-                header = struct.pack("<I", packet_id)
-                data = header + amplified_data
-                
-                udp.sendto(data, (self.espIP, self.espUDPport))
-                
-                packet_id += 1
-    
-    def startAudioStream(self):
-        self.audioRunning = True
-
-    def stopAudioStream(self):
-        self.audioRunning = False
-    """
+            # only sleep if we are actually ahead of schedule
+            if sleepTime > 0:
+                time.sleep(sleepTime)
+        return
 
     def start(self):
         threads = [
             threading.Thread(target=lambda: asyncio.run(self.connect()), name="WS-Thread"),
-            threading.Thread(target=self.imgListener, name="UDP-Img-Thread"),
-            threading.Thread(target=self.statsUDPlistener, name="UDP-Stats-Thread"),
-            threading.Thread(target=self.handleTextQueue, name="Audio-Send-Thread")
+            threading.Thread(target=self._imgListener, name="UDP-Img-Thread"),
+            threading.Thread(target=self._statsUDPlistener, name="UDP-Stats-Thread"),
+            threading.Thread(target=self._handleAudioSampleQueue, name="Audio-Send-Thread")
         ]
         for t in threads:
             t.daemon = True

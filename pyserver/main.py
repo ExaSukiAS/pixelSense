@@ -3,9 +3,9 @@ import json
 import asyncio
 import re
 from termcolor import colored
-from esp32Handler import ESP32WebSocket
-from gemini import GeminiClient
-from tracker import Tracker
+from ESP32handler import ESP32
+from Gemini import GeminiClient
+from Tracker import Tracker
 from UIhandler import GUI
 from TTShandler import TTS
 
@@ -235,6 +235,7 @@ def espImageHandler(image):
 # --------------- Text to speech object functions ---------------
 
 def onAudioSamples(audioChunk):
+    esp.queueSamplesForStream(audioChunk)
     return
 
 def onSynthComplete():
@@ -343,7 +344,7 @@ geminiClientFast = GeminiClient(geminiAPIkey, "gemini-2.5-flash-lite", onContent
 geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.5-flash", onContentChunk=coordGeminiResponseHandler)
 
 # start esp32 websocket client
-esp = ESP32WebSocket(onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onStats=espStatsHandler)
+esp = ESP32(onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onStats=espStatsHandler)
 esp.start()
 
 # piper text to speech (tts) object
