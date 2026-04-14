@@ -3,8 +3,8 @@ import socket
 import time
 import struct
 
-ESPIP = "192.168.68.105"
-PORT = 5005
+ESPIP = "192.168.68.106"
+PORT = 9001
 
 def getPCMsamples(filePath, samplingRate):
     print(f"Loading {filePath}...")
@@ -57,5 +57,5 @@ def sendSamples(rawPCM, samplingRate):
 
     print("Finished sending audio stream.")
 
-rawPCM = getPCMsamples("18sec.wav")
-sendSamples(rawPCM)
+rawPCM = getPCMsamples("18sec.wav", 12000)
+sendSamples(rawPCM, 12000)

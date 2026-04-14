@@ -5,9 +5,9 @@ import re
 from termcolor import colored
 from esp32Handler import ESP32WebSocket
 from gemini import GeminiClient
-from audio import Voice
 from tracker import Tracker
 from UIhandler import GUI
+from TTShandler import TTS
 
 # gemini configuration
 geminiKeyToUse = "1"
@@ -57,22 +57,28 @@ with open("instructions.txt", "r") as file:
 fullResponse = ""
 def fastGeminiResponseHandler(responseChunk):
     global fullResponse
+
     if responseChunk == "#$$#": # detect end of stream
         guiServer.sendMessage("loader", "")
         guiServer.sendMessage("log", fullResponse)
         fullResponse = ""
         return 
+    
     guiServer.sendMessage("loader", "80@#$@Parsing Gemini content stream")
     guiServer.sendMessage("log", fullResponse)
+
     # sanitizes text for Text-to-Speech by removing markdown formatting, emojis, and unwanted symbols
     def sanitize_for_tts(text):
         text = re.sub(r'[`*_~^#>|]', '', text)
         text = re.sub(r"[^\w\s.,!?'\"():;-]", '', text)
         text = re.sub(r'_', '', text)
         return text
+    
     if responseChunk is not None:
         fullResponse += responseChunk
-        voiceServer.utterChunk(sanitize_for_tts(responseChunk))
+        #voiceServer.utterChunk(sanitize_for_tts(responseChunk))
+        tts.queueTextForSynth(sanitize_for_tts(responseChunk))
+
     return
 
 # handles response from gemini flash model
@@ -136,8 +142,6 @@ def espMessageHandler(message):
         esp.requestCapture("stopImageStream")
 
 def espStatsHandler(stats):
-    # stats[0]-stats[2] = Used SRAM
-    # stats[1]-stats[3] = Used PSRAM
     used_stats = [
         stats[0],            # Total SRAM
         stats[1],            # Total PSRAM
@@ -165,8 +169,10 @@ def espImageHandler(image):
 
     if currentMode == ".freeform":
         guiServer.sendMessage("loader", "40@#$@Waiting for user prompt")
+        """
         if voiceServer.loop:
             asyncio.run_coroutine_threadsafe(executeFreeform(), voiceServer.loop) # run in the same asyncio loop as voiceServer
+        """
     elif currentMode == ".txt_rec":
         guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
         executeTextRecognition()
@@ -182,8 +188,10 @@ def espImageHandler(image):
             coordRunning = True
             guiServer.sendMessage("loader", "30@#$@Waiting for user prompt")
 
+            """
             if voiceServer.loop:
                 asyncio.run_coroutine_threadsafe(executeCoordination(), voiceServer.loop) # run in the same asyncio loop as voiceServer
+            """
     else:
         global trackerInitialized, lastSendTime
         if trackerInitialized and tracker is not None and time.time() - lastSendTime > 0.1: # cap at 10FPS
@@ -224,13 +232,13 @@ def espImageHandler(image):
             lastSendTime = time.time()
     return
 
-# --------------- Voice client functions ---------------
+# --------------- Text to speech object functions ---------------
 
-# this function is triggered when the voice client is connected
-def onVoiceClientConnect():
-    global voiceConnected
-    voiceConnected = True
-    print(colored("Voice client connected!", "light_green"))
+def onAudioSamples(audioChunk):
+    return
+
+def onSynthComplete():
+    return
 
 # --------------- GUI client functions ---------------
 
@@ -262,7 +270,7 @@ def onGUIclientMessage(message):
 
     elif message == 'terminate':
         esp.stopAudioStream()
-        voiceServer.stopUttering()
+        #voiceServer.stopUttering()
 
         # reset variables and objects
         global trackedObjName, trackerInitialized, tracker, coordRunning
@@ -291,20 +299,24 @@ def onGUIclientMessage(message):
 
 # all main user features
 async def executeFreeform():
+    """
     voiceContentFuture = voiceServer.getVoiceContentFuture()
     voiceContent = await voiceContentFuture
+    """
+    voiceContent = "hello"
 
     print(colored(f"User said: {voiceContent}", "blue"))
 
     guiServer.sendMessage("loader", f"70@#$@User said: {voiceContent}")
 
-    esp.startAudioStream()
-
     geminiClientFast.generateContentStream(AIistructions[currentMode], voiceContent, currentImage)
 
 async def executeCoordination():
+    """
     voiceContentFuture = voiceServer.getVoiceContentFuture()
     voiceContent = await voiceContentFuture
+    """
+    voiceContent = "bottle"
 
     print(colored(f"User said: {voiceContent}", "blue"))
 
@@ -317,15 +329,12 @@ async def executeCoordination():
     return
 
 def executeTextRecognition():
-    esp.startAudioStream()
     geminiClientFast.generateContentStream(AIistructions[currentMode], "What is written here?", currentImage)
 
 def executeObjectDetection():
-    esp.startAudioStream()
     geminiClientFast.generateContentStream(AIistructions[currentMode], "What are the objects in this image?", currentImage)
 
 def executeImageDescription():
-    esp.startAudioStream()
     geminiClientFast.generateContentStream(AIistructions[currentMode], "Describe this image.", currentImage)
 
 
@@ -337,9 +346,8 @@ geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.5-flash", onContentChun
 esp = ESP32WebSocket(onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onStats=espStatsHandler)
 esp.start()
 
-# start voice server
-voiceServer = Voice(onConnect=onVoiceClientConnect)
-voiceServer.start()
+# piper text to speech (tts) object
+tts = TTS(onAudioSamples=onAudioSamples, onSynthComplete=onSynthComplete)
 
 # start GUI server
 guiServer = GUI(onConnect=onGUIclientConnect, onMessage=onGUIclientMessage)

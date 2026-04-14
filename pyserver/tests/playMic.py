@@ -1,13 +1,14 @@
 import numpy as np
 import socket
 import pyaudio
+import websocket # Import the websocket library
 
 # Configuration
 SAMPLING_RATE = 8000
-CHUNK_SIZE = 128 # Matches your udpStreamPacketSize
-espIP = "192.168.68.105"
+CHUNK_SIZE = 128
+espIP = "192.168.68.106"
 udpPort = 9001
-tcpPort = 9000
+tcpPort = 9000 # This is the WebSocket port
 computerPort = 5006
 
 # Initialize PyAudio
@@ -18,33 +19,29 @@ stream = p.open(format=pyaudio.paInt16,
                 output=True,
                 frames_per_buffer=CHUNK_SIZE)
 
-# Initialize Socket
+# Initialize UDP Socket (for receiving the audio stream later)
 udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp.bind(("0.0.0.0", computerPort))
 
-print(f"Sending handshake to {espIP}:{udpPort}...")
-udp.sendto(b'handshakeMessage', (espIP, udpPort))
-
-espConnected = False
-
-udpHandshake = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-udpHandshake.bind(("0.0.0.0", 5005))
-
-while True:
-    data, addr = udpHandshake.recvfrom(512) # Larger buffer to ensure we don't drop packets
-
-    if data == b'receivedPacket':
-        if not espConnected:
-            espConnected = True
-            print("ESP32 Connected!")
-            break
+# Connect to the ESP32 via WebSocket
+print(f"Connecting to WebSocket at ws://{espIP}:{tcpPort}...")
+ws_url = f"ws://{espIP}:{tcpPort}"
+try:
+    ws = websocket.create_connection(ws_url)
+    print("WebSocket connected!")
     
+    # Send the command over WebSocket
+    print("Sending mic stream request...")
+    ws.send("startAudioStream") # Sends proper WS text frame
+    
+except Exception as e:
+    print(f"WebSocket connection failed: {e}")
+    exit()
 
-print(f"Sending mic stream request to {espIP}:{tcpPort}...")
-udp.sendto(b'startAudioStream', (espIP, tcpPort))
-
+# Now listen for the UDP audio packets coming back
+print(f"Listening for UDP audio on port {computerPort}...")
 while True:
-    data, addr = udp.recvfrom(512) # Larger buffer to ensure we don't drop packets
+    data, addr = udp.recvfrom(512) 
 
     # 1. Play the raw bytes immediately for real-time sound
     stream.write(data)

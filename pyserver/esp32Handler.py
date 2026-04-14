@@ -10,7 +10,7 @@ import time
 
 class ESP32WebSocket:
     def __init__(self, onConnect=None, onMessage=None, onImage=None, onStats=None):
-        self.espIP = "192.168.68.107"
+        self.espIP = "192.168.68.106"
         self.espWsPort = 9000
         self.espUDPport = 9001
 
@@ -97,6 +97,7 @@ class ESP32WebSocket:
 
                     del buffers[frameID]
     
+    # listen for stats data(CPU usage, memory usage) from ESP32 and forward to callback
     def statsUDPlistener(self):
         self.statsUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.statsUDP.bind(("0.0.0.0", self.statsReceivingPort))
@@ -109,6 +110,14 @@ class ESP32WebSocket:
                 if self.onStats:
                     self.onStats(stats)
     
+    def handleTextQueue(self):
+        return
+
+    def streamAudio(self, samples):
+        return
+    
+    """
+    This function will not be used. Only use the data sending structure as a reference for how to send audio data to ESP32.
     def streamSystemAudio(self):
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # initialize PyAudio
@@ -156,19 +165,20 @@ class ESP32WebSocket:
                 udp.sendto(data, (self.espIP, self.espUDPport))
                 
                 packet_id += 1
-
+    
     def startAudioStream(self):
         self.audioRunning = True
 
     def stopAudioStream(self):
         self.audioRunning = False
+    """
 
     def start(self):
         threads = [
             threading.Thread(target=lambda: asyncio.run(self.connect()), name="WS-Thread"),
             threading.Thread(target=self.imgListener, name="UDP-Img-Thread"),
             threading.Thread(target=self.statsUDPlistener, name="UDP-Stats-Thread"),
-            threading.Thread(target=self.streamSystemAudio, name="Audio-Send-Thread")
+            threading.Thread(target=self.handleTextQueue, name="Audio-Send-Thread")
         ]
         for t in threads:
             t.daemon = True

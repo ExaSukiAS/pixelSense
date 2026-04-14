@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useMemo } from "react"
 
 // converts normalized box data (must be in 0 to 1000 scale) to pixel format
 const getPixelBbox = (normalizedBbox, imgWidth, imgHeight) =>{
@@ -31,17 +31,23 @@ const getBboxConnectionLine = (pixelBboxes) =>{
 export const CameraFeed = ({buffer, normalizedBbox, fps, resolution, isStreaming}) => {
     const imgRef = useRef(null);
     const [imgSize, setImgSize] = useState({ width: 0, height: 0 });
-    const [connectionLine, setConnectionLine] = useState({x:0, y:0, length:0, angle:0});
 
-    useEffect(() => {
-        if (imgSize.width === 0 || normalizedBbox.length === 0) return;
+    // only update size if it actually changes or on first load
+    const handleLoad = () => {
+        const { width, height } = imgRef.current;
+        if (imgSize.width !== width || imgSize.height !== height) {
+            setImgSize({ width, height });
+        }
+    };
 
-        const pixelBboxes = normalizedBbox.map(box =>
+    // memoize the line calculation so it doesn't re-run unless the boxes or image size actually change
+    const connectionLine = useMemo(() => {
+        if (imgSize.width === 0 || normalizedBbox.length !== 2) return {x:0, y:0, length:0, angle:0};
+
+        const pixelBboxes = normalizedBbox.map(box => 
             getPixelBbox(box, imgSize.width, imgSize.height)
         );
-
-        const line = getBboxConnectionLine(pixelBboxes);
-        setConnectionLine(line);
+        return getBboxConnectionLine(pixelBboxes);
     }, [normalizedBbox, imgSize]);
 
     return (
@@ -67,7 +73,7 @@ export const CameraFeed = ({buffer, normalizedBbox, fps, resolution, isStreaming
                 }}
             ></div>
 
-            <img  ref={imgRef} className="feed-image" src={buffer} onLoad={() => {setImgSize({width: imgRef.current.width, height: imgRef.current.height});}}/>
+            <img  ref={imgRef} className="feed-image" src={buffer} onLoad={handleLoad}/>
 
             <div className="feed-overlay">
                 <div className="live-badge">
