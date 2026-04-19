@@ -9,42 +9,49 @@
 #include "mic.h"
 #include "touchSensor.h"
 #include "camera.h"
-#include "resourceMonitor.h"
-
-// to disable brownout detector
-#include "soc/soc.h" 
-#include "soc/rtc_cntl_reg.h" 
+#include "deviceMonitor.h"
 
 /* 
 two esp32 s3 boards will share the same core logics of code
 but pin layout and some parameters will be different based on the board
-'L' for left board and 'R' for right board (as per the orientation in the design files)
-change the value of 'board' to switch between the two boards while uploading the code
+'L' for left board and 'R' for right board (as per the orientation in the PCB design files)
+change the value of BOARD_TYPE to switch between the two boards before uploading the code
 */
-#define BOARD_TYPE 'R'
+#define BOARD_TYPE 'L'
 
 // WiFi credentials
 const char* ssid = "Amartya";
 const char* password = "amartya@@2020";
 
 // static pins (same on left and right boards)
-#define LASER_SDA_PIN        5
-#define LASER_SCL_PIN        6
 #define ONBOARD_LED_PIN      21
 #define MIC_WS_PIN           42    
 #define MIC_DATA_PIN         41 
-#define TOUCH_PIN            4
 
 // conditional pins (board dependent)
 #if BOARD_TYPE == 'L'
-    #define SPEAKER_WS_PIN   9
-    #define SPEAKER_CLK_PIN  8
-    #define SPEAKER_DATA_PIN 7
+    #define SPEAKER_WS_PIN   2
+    #define SPEAKER_CLK_PIN  1
+    #define SPEAKER_DATA_PIN 9
+    #define LASER_SDA_PIN    43
+    #define LASER_SCL_PIN    6
+    #define TOUCH_PIN        44
+    #define BATTERY_PIN      3
+    #define INTERCOMM_TX     4
+    #define INTERCOMM_RX     5
 #else
-    #define SPEAKER_WS_PIN   3
-    #define SPEAKER_CLK_PIN  2
-    #define SPEAKER_DATA_PIN 1
+    #define SPEAKER_WS_PIN   43
+    #define SPEAKER_CLK_PIN  6
+    #define SPEAKER_DATA_PIN 5
+    #define LASER_SDA_PIN    7
+    #define LASER_SCL_PIN    44
+    #define TOUCH_PIN        9
+    #define BATTERY_PIN      8
+    #define INTERCOMM_TX     3
+    #define INTERCOMM_RX     4
 #endif
+
+
 
 Camera camera; // OV3660 camera object
 
@@ -75,14 +82,14 @@ WebSocketsServer webSocketServer(espWSport);
 // UDP server
 const int espUDPport = 9001; // UDP port of esp32
 IPAddress computerIP;
-const uint16_t computerImgPort = 5005; // port of the server(computer) at which images will be streamed
-const uint16_t computerMicPort = 5006; // port of the server(computer) at which audio samples from microphone will be streamed
-const uint16_t computerMsgPort = 5007; // port the teh server(computer) at which device stats
+const uint16_t computerImgPort = BOARD_TYPE == 'L' ? 5005 : 5008; // port of the server(computer) at which images will be streamed
+const uint16_t computerMicPort = BOARD_TYPE == 'L' ? 5006 : 5009; // port of the server(computer) at which audio samples from microphone will be streamed
+const uint16_t computerMsgPort = BOARD_TYPE == 'L' ? 5007 : 5010; // port the teh server(computer) at which device stats
 bool computerDiscovered = false;
 const uint32_t imageStreamPktSize = 1400;
 WiFiUDP udpServer;
 
-ResourceMonitor resMon;
+DeviceMonitor devMonitor(BATTERY_PIN);
 int deviceStats[8];
 const unsigned long deviceStatsSendingInterval = 500; 
 unsigned long lastDevuceStatsSendTime = 0;
@@ -212,9 +219,9 @@ void sendAudioUDP(int16_t* samples){
 
 // sends device stats via UDP
 void sendDeviceStats(){
-  resMon.getInfo(deviceStats); // fills index 0-5
-  deviceStats[6] = dist_mm; // fills index 6 (Distance)
-  deviceStats[7] = 3.7;
+  devMonitor.getInfo(deviceStats); // fills index 0-5
+  deviceStats[6] = dist_mm;     // TOF distance
+  deviceStats[7] = WiFi.RSSI(); // wifi signal strength
 
   udpServer.beginPacket(computerIP, computerMsgPort);
   udpServer.write((uint8_t*)deviceStats, sizeof(deviceStats)); 
@@ -222,12 +229,9 @@ void sendDeviceStats(){
 }
 
 void setup() {
-    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);  // Turn-off the brownout detector
-
     Serial.begin(115200);
     
     camera.attach();
-    
     speaker.attach();
 
     WiFi.begin(ssid, password);

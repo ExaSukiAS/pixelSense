@@ -1,4 +1,4 @@
-const ResourceSection = ({ title, usage, maxVal, unit }) => {
+const ResourceSection = ({ title, usage, maxVal, unit, showPercentage }) => {
     return (
         <div className="resource">
             <div className="card-label">{title}</div>
@@ -13,17 +13,13 @@ const ResourceSection = ({ title, usage, maxVal, unit }) => {
     );
 };
 
-/* Example Resources JSON:
-   {
-       "ESP32 CPU Usage": { "max": 240, "usage": 50, "unit": "MHz" },
-       "RAM Usage": { "max": 520, "usage": 30, "unit": "KB" }
-   }
-*/
-export const ESPresourceUsage = ({resources}) => {
-    const titles = Object.keys(resources); // get the keys (titles)
+export const DevInfo = ({resources, info, heading}) => {
+    const resTitles = Object.keys(resources); 
+    const infoTitles = Object.keys(info); 
     return (
-        <div className="resource-card">
-            {titles.map((title) => {
+        <div className="devInfo">
+            <span className="heading">{heading}</span>
+            {resTitles.map((title) => {
                 const data = resources[title];
                 return (
                     <ResourceSection
@@ -35,6 +31,17 @@ export const ESPresourceUsage = ({resources}) => {
                     />
                 );
             })}
+            <div className="telemetry-list">
+                {infoTitles.map((title) => {
+                    const data = info[title];
+                    return(
+                        <div className="telemetry-item">
+                            <span className="label">{title}</span>
+                            <span className="value primary">{`${data.value}${data.unit}`}</span>
+                        </div>
+                    );
+                })}
+            </div>
         </div>
     );
 };

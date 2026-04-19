@@ -2,12 +2,12 @@ export const ConnectionIndicators = ({states}) => {
     return (
           <div className="status-indicators">
             <div className="status-badge">
-              <span className={`indicator ${states.esp == true ? "connected" : ""}`} />
-              <span className="label">ESP32</span>
+              <span className={`indicator ${states.espLeft == true ? "connected" : ""}`} />
+              <span className="label">ESPS3 LEFT</span>
             </div>
             <div className="status-badge">
-              <span className={`indicator ${states.voice == true ? "connected" : ""}`} />
-              <span className="label">VOICE</span>
+              <span className={`indicator ${states.espRight == true ? "connected" : ""}`} />
+              <span className="label">ESPS3 RIGHT</span>
             </div>
             <div className="status-badge">
               <span className={`indicator ${states.server == true ? "connected" : ""}`} />

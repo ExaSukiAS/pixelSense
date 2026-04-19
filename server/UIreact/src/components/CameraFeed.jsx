@@ -28,7 +28,7 @@ const getBboxConnectionLine = (pixelBboxes) =>{
 };
 
 // box data format: [{"x":xVal, "y":yVal, "width":width, "height":height, "label":label}, ...]
-export const CameraFeed = ({buffer, normalizedBbox, fps, resolution, isStreaming}) => {
+export const CameraFeed = ({buffer, normalizedBbox}) => {
     const imgRef = useRef(null);
     const [imgSize, setImgSize] = useState({ width: 0, height: 0 });
 
@@ -74,15 +74,6 @@ export const CameraFeed = ({buffer, normalizedBbox, fps, resolution, isStreaming
             ></div>
 
             <img  ref={imgRef} className="feed-image" src={buffer} onLoad={handleLoad}/>
-
-            <div className="feed-overlay">
-                <div className="live-badge">
-                    <span className={`pulse-dot ${isStreaming ? "live" : ""}`} />
-                    <span>{isStreaming ? "LIVE CAPTURE" : "STATIC CAPTURE"}</span>
-                </div>
-                <div className="stream-stats">{resolution} | {fps}FPS</div>
-            </div>
-
         </div>
     );
 };

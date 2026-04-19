@@ -61,7 +61,6 @@ const connectToServer = () => {
 
 // handles messages from python process
 const handleSocketMessage = (msgType, msg) => {
-    console.log(msgType+"  "+msg);
     switch(msgType){
         case "activate":
             onActivationMsgFunc(msg);
@@ -74,8 +73,10 @@ const handleSocketMessage = (msgType, msg) => {
             onLoaderMsgFunc(percentage, message);
             break;
         case "stats":
-            const [totalSRAM, totalPSRAM, usedSRAM, usedPSRAM, cpu, distance] = msg.split(",");
-            onStatsFunc(totalSRAM, totalPSRAM, usedSRAM, usedPSRAM, cpu, distance);
+            const [stats, boardType] = msg.split("$");
+            let [totalSRAM, totalPSRAM, usedSRAM, usedPSRAM, cpuTemp, volt, distance, wifiSignal] = stats.split(",");
+            volt = volt/10;
+            onStatsFunc(boardType, totalSRAM, totalPSRAM, usedSRAM, usedPSRAM, cpuTemp, volt, distance, wifiSignal);
             break;
         case "coordinates":
             const coordinates = JSON.parse(msg);
@@ -86,10 +87,12 @@ const handleSocketMessage = (msgType, msg) => {
 
 const handleSocketBINmessage = (buffer) => {
     const view = new Uint8Array(buffer);
-    // b'\x01' + image_bytes
-    const header = view[0];
-    if (header === 1) { // 1 = IMG type
-        const imageData = buffer.slice(1);
+
+    const socketHeader = view[0]; // websocket header
+    const imageTypeInt = parseInt(view[1]); // type of image (1 for left view, 2 for right view and 3 for depth view)
+
+    if (socketHeader == 1) { // check if it's a binary message
+        const imageData = buffer.slice(2);
         const blob = new Blob([imageData], { type: 'image/jpeg' });
 
         if (currentImgUrl) {
@@ -97,6 +100,6 @@ const handleSocketBINmessage = (buffer) => {
         }
 
         currentImgUrl = URL.createObjectURL(blob);
-        onImageMsgFunc(currentImgUrl);
+        onImageMsgFunc(currentImgUrl, imageTypeInt);
     }
 }

@@ -1,6 +1,5 @@
 import time
 import json
-import asyncio
 import re
 from termcolor import colored
 from ESP32handler import ESP32
@@ -8,13 +7,16 @@ from Gemini import GeminiClient
 from Tracker import Tracker
 from UIhandler import GUI
 from TTShandler import TTS
+from STThandler import STT
+from halo import Halo
 
 # gemini configuration
-geminiKeyToUse = "1"
+geminiKeyToUse = "6"
 
 currentMode = None # current mode (.freeform, .coord, .txt_rec, .img_des, .obj_dtc, streaming, None)
 currentImage = None
 coordRunning = False # status of coordination feature
+streamingState = {"left": False, "right": False} # stores the streaming state of the two esp, False for not streaming and True for streaming
 
 trackerConfidenceThreshold = 0.5 # minimum confidence threshold for tracking hand and target object in coordination mode
 tracker = None
@@ -25,8 +27,11 @@ handRIO_norm = None
 trackedObjName = None
 
 guiConnected = False
-espConnected = False
-voiceConnected = False
+espRightConnected = False
+espLeftConnected = False
+
+sttInitialized = False
+espOnindicated = False
 
 # fetch tehe correct gemini api key from geminiAPI.json
 geminiAPIkey = ""
@@ -76,7 +81,6 @@ def fastGeminiResponseHandler(responseChunk):
     
     if responseChunk is not None:
         fullResponse += responseChunk
-        #voiceServer.utterChunk(sanitize_for_tts(responseChunk))
         tts.queueTextForSynth(sanitize_for_tts(responseChunk))
 
     return
@@ -109,14 +113,20 @@ def coordGeminiResponseHandler(responseChunk):
 # --------------- ESP32 functions ---------------
 
 # this function is trigered when esp32 is connected
-def onespConnect():
-    global espConnected
-    espConnected = True
-    print(colored("ESP32 connected!", "light_green"))
+def onespConnect(boardType):
+    if boardType == "right":
+        global espRightConnected
+        espRightConnected = True
+        print(colored("Right ESP32 connected!", "light_green"))
+    elif boardType == "left":
+        global espLeftConnected
+        espLeftConnected = True
+        print(colored("Left ESP32 connected!", "light_green"))
 
 # handles messages from esp32
-def espMessageHandler(message):
+def espMessageHandler(boardType, message):
     global currentMode
+    """
     if message == "$#TXT#$touch1_single":
         guiServer.sendMessage("activate", ".txt_rec")
         currentMode = ".txt_rec"
@@ -140,23 +150,27 @@ def espMessageHandler(message):
     elif message == "$#TXT#$touch2_hold":
         guiServer.sendMessage("activate", "terminateTask")
         esp.requestCapture("stopImageStream")
+    """
 
-def espStatsHandler(stats):
-    used_stats = [
+def espStatsHandler(boardType, stats):
+    espStats = [
         stats[0],            # Total SRAM
         stats[1],            # Total PSRAM
         stats[0] - stats[2], # Used SRAM
         stats[1] - stats[3], # Used PSRAM
         stats[4],            # CPU MHz
-        stats[5]             # Distance
+        stats[5],            # Battery voltage
+        stats[6],            # TOF distance
+        stats[7]             # WiFi signal
     ]
-    # convert the new list to a comma-separated string
-    stats_string = ",".join(map(str, used_stats))
-    guiServer.sendMessage("stats", stats_string)
+    statsString = ",".join(map(str, espStats)) # convert the new list to a comma-separated string
+    statsString += f"${boardType}" # saperate board type from the payload by the "$" sign
+    guiServer.sendMessage("stats", statsString)
 
 # handles images from esp32 
+# executes features(.txt_rec, .freeform, .obj_dtc, .img_des and .coord) upon receiving an image
 lastSendTime = 0
-def espImageHandler(image):
+def espImageHandler(boardType, image):
     global coordRunning, tracker
     if tracker is not None:
         if coordRunning and tracker.processingFrame:
@@ -165,33 +179,31 @@ def espImageHandler(image):
     global currentImage
     currentImage = image
 
-    guiServer.sendMessage("IMG", image)
+    prefix = b'\x01' if boardType == "left" else b'\x02' # convert the boardType to a single byte prefix ('1' for left, '2' for right)
+    imgWithHeader = prefix + image
+
+    guiServer.sendMessage("IMG", imgWithHeader)
 
     if currentMode == ".freeform":
         guiServer.sendMessage("loader", "40@#$@Waiting for user prompt")
-        """
-        if voiceServer.loop:
-            asyncio.run_coroutine_threadsafe(executeFreeform(), voiceServer.loop) # run in the same asyncio loop as voiceServer
-        """
+        espLeft.requestMicSampleStream()
+        stt.startRecording()
     elif currentMode == ".txt_rec":
         guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
-        executeTextRecognition()
+        geminiClientFast.generateContentStream(AIistructions[currentMode], "What is written here?", currentImage)
     elif currentMode == ".obj_dtc":
         guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
-        executeObjectDetection()
+        geminiClientFast.generateContentStream(AIistructions[currentMode], "What are the objects in this image?", currentImage)
     elif currentMode == ".img_des":
         guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
-        executeImageDescription()
+        geminiClientFast.generateContentStream(AIistructions[currentMode], "Describe this image.", currentImage)
 
     if not coordRunning:
         if currentMode == ".coord":
             coordRunning = True
             guiServer.sendMessage("loader", "30@#$@Waiting for user prompt")
-
-            """
-            if voiceServer.loop:
-                asyncio.run_coroutine_threadsafe(executeCoordination(), voiceServer.loop) # run in the same asyncio loop as voiceServer
-            """
+            espLeft.requestMicSampleStream()
+            stt.startRecording()
     else:
         global trackerInitialized, lastSendTime
         if trackerInitialized and tracker is not None and time.time() - lastSendTime > 0.1: # cap at 10FPS
@@ -232,14 +244,35 @@ def espImageHandler(image):
             lastSendTime = time.time()
     return
 
+def onMicSampleHandler(boardType, samples):
+    stt.feedAudioSamples(samples)
+
 # --------------- Text to speech object functions ---------------
 
 def onAudioSamples(audioChunk):
-    esp.queueSamplesForStream(audioChunk)
+    espLeft.queueSamplesForStream(audioChunk)
     return
 
 def onSynthComplete():
     return
+
+# --------------- Speech to text object functions ---------------
+
+def onSpeechTranscription(text):
+    print(colored(f"User said: {text}", "blue"))
+
+    global currentMode
+
+    if currentMode == ".freeform":
+        guiServer.sendMessage("loader", f"70@#$@User said: {text}")
+        geminiClientFast.generateContentStream(AIistructions[currentMode], text, currentImage)
+    elif currentMode == ".coord":
+        global trackedObjName
+        trackedObjName = text
+        guiServer.sendMessage("loader", f"60@#$@Getting initial coordinates of hand and {text}")
+        geminiClientCoord.generateContentStream(AIistructions[currentMode], text, currentImage)
+
+    espLeft.stopMicSampleStream()
 
 # --------------- GUI client functions ---------------
 
@@ -249,29 +282,26 @@ def onGUIclientConnect():
     guiConnected = True
     print(colored("GUI client connected!", "light_green"))
 
-    global espOnindicated, voiceOnIndicated, voiceConnected
+    global espOnindicated
     espOnindicated = False
-    voiceOnIndicated = False
-    voiceConnected = False
 
 # handle messages from GUI client
 def onGUIclientMessage(message):
     global currentMode
     if message in [".freeform", ".txt_rec", ".obj_dtc", ".img_des"]:
         currentMode = message
-        esp.requestCapture("captureHigh")
+        espLeft.requestCapture("captureHigh")
         guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
         guiServer.sendMessage("loader", "20@#$@Fetching image")
 
     elif message == ".coord":
         currentMode = message
-        esp.requestCapture("startImageStream")
+        espLeft.requestCapture("startImageStream")
         guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
         guiServer.sendMessage("loader", "15@#$@Fetching image")
 
     elif message == 'terminate':
-        esp.stopAudioStream()
-        #voiceServer.stopUttering()
+        espLeft.stopAudioStream()
 
         # reset variables and objects
         global trackedObjName, trackerInitialized, tracker, coordRunning
@@ -281,87 +311,58 @@ def onGUIclientMessage(message):
         tracker = None
 
         if coordRunning:
-            esp.requestCapture("stopImageStream")
+            espLeft.requestCapture("stopImageStream")
 
         coordRunning = False
 
         print(colored("All processes terminated.", "yellow"))
 
-
-    elif message == 'startImageStream':
+    # streaming messages
+    elif message == 'startLeftImageStream':
         currentMode = "streaming"
-        esp.requestCapture("startImageStream")
+        streamingState["left"] = True
+        espLeft.requestCapture("startImageStream")
+    elif message == 'stopLeftImageStream':
+        streamingState["left"] = False
+        espLeft.requestCapture("stopImageStream")
+    elif message == 'startRightImageStream':
+        currentMode = "streaming"
+        streamingState["right"] = True
+        espRight.requestCapture("startImageStream")
+    elif message == 'stopRightImageStream':
+        streamingState["right"] = False
+        espRight.requestCapture("stopImageStream")
 
-    elif message == 'stopImageStream':
-        currentMode = None
-        esp.requestCapture("stopImageStream")
+if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support() 
 
-# --------------- Main user feature functions ---------------
+    # gemini objects
+    geminiClientFast = GeminiClient(geminiAPIkey, "gemini-2.0-flash-lite", onContentChunk=fastGeminiResponseHandler)
+    geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.0-flash", onContentChunk=coordGeminiResponseHandler)
 
-# all main user features
-async def executeFreeform():
-    """
-    voiceContentFuture = voiceServer.getVoiceContentFuture()
-    voiceContent = await voiceContentFuture
-    """
-    voiceContent = "hello"
+    # start GUI server
+    guiServer = GUI(onConnect=onGUIclientConnect, onMessage=onGUIclientMessage)
+    guiServer.start()
 
-    print(colored(f"User said: {voiceContent}", "blue"))
+    # start esp32 websocket client
+    espLeft = ESP32(espIP="192.168.68.102", boardType="left", imgPort=5005, micPort=5006, statsPort=5007, onConnect=onespConnect, onMessage=espMessageHandler, onMicSamples=onMicSampleHandler, onImage=espImageHandler, onStats=espStatsHandler)
+    espRight = ESP32(espIP="192.168.68.104", boardType="right", imgPort=5008, micPort=5009, statsPort=5010, onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onStats=espStatsHandler)
+    espLeft.start()
+    espRight.start()
 
-    guiServer.sendMessage("loader", f"70@#$@User said: {voiceContent}")
+    # piper text to speech (tts) object
+    tts = TTS(onAudioSamples=onAudioSamples, onSynthComplete=onSynthComplete)
 
-    geminiClientFast.generateContentStream(AIistructions[currentMode], voiceContent, currentImage)
-
-async def executeCoordination():
-    """
-    voiceContentFuture = voiceServer.getVoiceContentFuture()
-    voiceContent = await voiceContentFuture
-    """
-    voiceContent = "bottle"
-
-    print(colored(f"User said: {voiceContent}", "blue"))
-
-    global trackedObjName
-    trackedObjName = voiceContent
-
-    guiServer.sendMessage("loader", f"60@#$@Getting initial coordinates of hand and {voiceContent}")
-
-    geminiClientCoord.generateContentStream(AIistructions[currentMode], voiceContent, currentImage)
-    return
-
-def executeTextRecognition():
-    geminiClientFast.generateContentStream(AIistructions[currentMode], "What is written here?", currentImage)
-
-def executeObjectDetection():
-    geminiClientFast.generateContentStream(AIistructions[currentMode], "What are the objects in this image?", currentImage)
-
-def executeImageDescription():
-    geminiClientFast.generateContentStream(AIistructions[currentMode], "Describe this image.", currentImage)
-
-
-# gemini objects
-geminiClientFast = GeminiClient(geminiAPIkey, "gemini-2.5-flash-lite", onContentChunk=fastGeminiResponseHandler)
-geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.5-flash", onContentChunk=coordGeminiResponseHandler)
-
-# start esp32 websocket client
-esp = ESP32(onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onStats=espStatsHandler)
-esp.start()
-
-# piper text to speech (tts) object
-tts = TTS(onAudioSamples=onAudioSamples, onSynthComplete=onSynthComplete)
-
-# start GUI server
-guiServer = GUI(onConnect=onGUIclientConnect, onMessage=onGUIclientMessage)
-guiServer.start()
-
-espOnindicated = False
-voiceOnIndicated = False
-# keep operations alive
-while True:
-    time.sleep(1)
-    if espConnected and guiConnected and not espOnindicated:
-        guiServer.sendMessage("activate", "espConnected")
-        espOnindicated = True
-    if voiceConnected and guiConnected and not voiceOnIndicated:
-        guiServer.sendMessage("activate", "voiceConnected")
-        voiceOnIndicated = True
+    # keep operations alive
+    while True:
+        time.sleep(1)
+        if espRightConnected and espLeftConnected and guiConnected and not espOnindicated:
+            guiServer.sendMessage("activate", "espLeftConnected")
+            guiServer.sendMessage("activate", "espRightConnected")
+            espOnindicated = True
+        if not sttInitialized:
+            # tiny whisper speech to text (stt) object
+            with Halo(text='Initializing STT...', spinner='dots'):
+                stt = STT(onTranscription=onSpeechTranscription)
+            sttInitialized = True
