@@ -3,6 +3,16 @@
 #include <WiFiUdp.h>
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
+#include <HardwareSerial.h>
+
+/* 
+two esp32 s3 boards will share the same core logics of code
+but pin layout and some parameters will be different based on the board
+'L' for left board and 'R' for right board (as per the orientation in the PCB design files)
+'L' board acts as the Master and 'R' board acts as the Slave during Synced Dual Image Streaming
+change the value of BOARD_TYPE to switch between the two boards before uploading the code
+*/
+#define BOARD_TYPE 'L'
 
 // custom
 #include "speaker.h"
@@ -10,14 +20,13 @@
 #include "touchSensor.h"
 #include "camera.h"
 #include "deviceMonitor.h"
-
-/* 
-two esp32 s3 boards will share the same core logics of code
-but pin layout and some parameters will be different based on the board
-'L' for left board and 'R' for right board (as per the orientation in the PCB design files)
-change the value of BOARD_TYPE to switch between the two boards before uploading the code
-*/
-#define BOARD_TYPE 'L'
+#if BOARD_TYPE == 'L'
+  #include "interEspCommMaster.h"
+  EspMaster EspSerial;
+#else
+  #include "interEspCommSalve.h"
+  EspSlave EspSerial;
+#endif
 
 // WiFi credentials
 const char* ssid = "Amartya";
@@ -47,13 +56,14 @@ const char* password = "amartya@@2020";
     #define LASER_SCL_PIN    44
     #define TOUCH_PIN        9
     #define BATTERY_PIN      8
-    #define INTERCOMM_TX     3
-    #define INTERCOMM_RX     4
+    #define INTERCOMM_TX     4
+    #define INTERCOMM_RX     3
 #endif
 
-
-
 Camera camera; // OV3660 camera object
+uint16_t imgFrameID = 0; // holds the imgFrame id for a streaming session
+bool dualImgStreamStarted = false;
+volatile bool rightEspCaptureDone = false;
 
 // laser sensor object
 #define SEALEVELPRESSURE_HPA (1013.25)
@@ -89,18 +99,19 @@ bool computerDiscovered = false;
 const uint32_t imageStreamPktSize = 1400;
 WiFiUDP udpServer;
 
+// device stats monitoring
 DeviceMonitor devMonitor(BATTERY_PIN);
 int deviceStats[8];
 const unsigned long deviceStatsSendingInterval = 500; 
 unsigned long lastDevuceStatsSendTime = 0;
 
 // toggles image streaming state
-void toggleImageStreaming(bool toggle){
-  if(toggle){
-    camera.imageStreamingStarted = true;
-  } else {
-    camera.imageStreamingStarted = false;
-  }
+void toggleSingleImgStream(bool toggle){
+  camera.imageStreamingStarted = toggle;
+}
+// toggles dual image streaming
+void toggleDualImgStream(bool toggle){
+  dualImgStreamStarted = toggle;
 }
 
 // toggles audio streaming state
@@ -120,7 +131,6 @@ void toggleMicAudioStreaming(bool toggle){
 }
 
 // handles incoming data through websocket
-// commands: captureHigh, captureLow, startImageStream, stopImageStream, startAudioStream, stopAudioStream
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch (type) {
     case WStype_CONNECTED:{
@@ -148,18 +158,33 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
             webSocketServer.broadcastBIN(camera.latestFb->buf, camera.latestFb->len);
             camera.clearFrameBuffer();
         }
-      } else if (msg == "startImageStream"){
+      } else if (msg == "strtSingleImgStream"){
+        imgFrameID = 0; // reset imgFrame id to prevent overflow over long term streams
         if(camera.currentRes != 'l'){
           camera.setResolution('l');
         }
-        toggleImageStreaming(true);
-      } else if (msg == "stopImageStream"){
-        toggleImageStreaming(false);
-      } else if (msg == "startAudioStream"){
+        toggleSingleImgStream(true);
+      } else if (msg == "stpSingleImgStream"){
+        toggleSingleImgStream(false);
+      } else if (msg == "strtMicStream"){
         toggleMicAudioStreaming(true);
-      } else if (msg == "stopAudioStream"){
+      } else if (msg == "stpMicStream"){
         toggleMicAudioStreaming(false);
       }
+      // these condition only executes in left esp: 
+      #if BOARD_TYPE == 'L'
+        if (msg == "strtDualImgStream"){
+            imgFrameID = 0; // reset imgFrame id to prevent overflow over long term streams
+            // stop single streaming
+            if(camera.imageStreamingStarted){
+              toggleSingleImgStream(false);
+            }
+            EspSerial.requestDualStream(); // tell right esp to initialize dual stream
+          
+        } else if (msg == "stpDualImgStream"){
+            toggleDualImgStream(false);
+        }
+      #endif
       break;
     }
     case WStype_DISCONNECTED:{
@@ -188,24 +213,24 @@ void processUDPAudioData() {
   }
 }
 
-// sends image stream via UDP
-void sendFrameUDP(camera_fb_t *fb){
-    static uint16_t frameID = 0;
-    frameID++;
-
+// sends image via UDP
+void sendImgFrameUDP(camera_fb_t *fb, uint16_t dist_cm, uint8_t imgFrameType, uint16_t imgFrameID){
     for(uint32_t offset = 0; offset < fb->len; offset += imageStreamPktSize){
-        uint16_t chunk = imageStreamPktSize;
-        if(offset + chunk > fb->len){
-            chunk = fb->len - offset;
-        }
+      uint16_t chunk = imageStreamPktSize;
+      if(offset + chunk > fb->len){
+          chunk = fb->len - offset;
+      }
 
-        udpServer.beginPacket(computerIP, computerImgPort);
-        udpServer.write((uint8_t*)&frameID, 2);
-        udpServer.write((uint8_t*)&offset, 4);
-        udpServer.write(fb->buf + offset, chunk);
-        udpServer.endPacket();
+      udpServer.beginPacket(computerIP, computerImgPort);
+      udpServer.write((uint8_t*)&imgFrameID, 2);      // 2-byte imgFrame id
+      udpServer.write((uint8_t*)&offset, 4);          // 4-byte payload offset
+      udpServer.write((uint8_t*)&imgFrameType, 1);    // 1-byte stream type (0 for single stream and 1 for dual stream)
+      udpServer.write((uint8_t*)&dist_cm, 2);         // 2-byte TOF distance
+      udpServer.write(fb->buf + offset, chunk);       // actual payload
+      udpServer.endPacket();
+
+      delay(7); // 7ms delay to avoid WiFi packet congestion
     }
-    delayMicroseconds(200);
 }
 
 // sends audio stream from mic via UDP
@@ -228,15 +253,81 @@ void sendDeviceStats(){
   udpServer.endPacket();
 }
 
+#if BOARD_TYPE == 'L'
+  void dualImgFrameCaptureTask(void *params){
+    for(;;){
+      if(!dualImgStreamStarted){
+        vTaskDelay(pdMS_TO_TICKS(5));
+        continue;
+      }
+
+      imgFrameID++;
+      rightEspCaptureDone = false;
+      EspSerial.requestCapture(imgFrameID); // request Right ESP (slave) to capture and send image with the same imgFrame id
+
+      // capture and send image to server(computer)
+      if (camera.captureStaticImg() && camera.latestFb != NULL) {
+        const uint16_t dist_cm = dist_mm/10;
+        sendImgFrameUDP(camera.latestFb, dist_cm, 1, imgFrameID);
+        camera.clearFrameBuffer();
+      }
+
+      // wait for Right ESP to finish capturung and sending the image
+      uint32_t timeout = millis();
+      while(!rightEspCaptureDone){
+        vTaskDelay(pdMS_TO_TICKS(5));
+        
+        // safety: timeout after 2 seconds so the master doesn't hang forever
+        if(millis() - timeout > 2000) {
+          Serial.println("Slave Timeout!");
+          break; 
+        }
+      }
+    }
+  }
+#endif
+
+// this function fires whenever the Left ESP or Right ESP receives a message through the Inter-ESP-UART
+void onEspMessage(String head, String tail){
+  #if BOARD_TYPE == 'L' // logic for Left Esp board (master)
+    if(head == "dualImgStreamReady"){
+      Serial.println("Slave is ready for dual streaming!");
+      imgFrameID = 0;
+      toggleDualImgStream(true);
+    } else if(head == "imgSent"){
+      rightEspCaptureDone = true;
+    }
+  #else // logic for Right Esp board(slave) 
+    if(head == "strtDualImgStream"){
+      // stop single streaming
+      if(camera.imageStreamingStarted){
+        toggleSingleImgStream(false);
+      }
+      EspSerial.indicateDualStreamReady(); // reply to Left ESP (master) that Right ESP(slave) is ready for dual streaming
+    } else if(head == "captureImg"){
+      uint16_t syncedImgFrameID = tail.toInt(); // same imgFrame id as Left ESP(master) 
+
+      // capture and send image to server(computer)
+      if (camera.captureStaticImg() && camera.latestFb != NULL) {
+        const uint16_t dist_cm = dist_mm/10;
+        sendImgFrameUDP(camera.latestFb, dist_cm, 1, syncedImgFrameID);
+        camera.clearFrameBuffer();
+      }
+
+      EspSerial.indicateFrameSent(); // indicate Left ESP (master) that the image was sent 
+    }
+  #endif
+}
+
 void setup() {
     Serial.begin(115200);
+    EspSerial.begin(INTERCOMM_RX, INTERCOMM_TX, onEspMessage);
     
     camera.attach();
     speaker.attach();
 
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi
-    Serial.println("Connected to Wi-Fi");
 
     udpServer.begin(espUDPport);
 
@@ -258,9 +349,13 @@ void setup() {
     webSocketServer.begin();
     webSocketServer.onEvent(webSocketEvent);
 
-    BaseType_t imageTask = xTaskCreatePinnedToCore(camera.frameCaptureTaskWrapper, "FrameCapture", 4096, &camera, 1, NULL, 0); // pin image streaming task to Core 0
-    BaseType_t audioPlaybackTask = xTaskCreatePinnedToCore(speaker.speakerTaskWrapper, "AudioPlayback", 4096, &speaker, 1, NULL, 1); // pin audio playback task to Core 1
-    BaseType_t audioCaptureTask = xTaskCreatePinnedToCore(mic.micTaskWrapper, "AudioCapture", 4096, &mic, 1, NULL, 1); // pin audio playback task to Core 1
+    xTaskCreatePinnedToCore(camera.frameCaptureTaskWrapper, "ImgFrameCapture", 4096, &camera, 1, NULL, 0); // pin single image streaming task to Core 0
+    xTaskCreatePinnedToCore(speaker.speakerTaskWrapper, "AudioPlayback", 4096, &speaker, 1, NULL, 1); // pin audio playback task to Core 1
+    xTaskCreatePinnedToCore(mic.micTaskWrapper, "AudioCapture", 4096, &mic, 1, NULL, 1); // pin audio playback task to Core 1
+
+    #if BOARD_TYPE == 'L'
+      xTaskCreatePinnedToCore(dualImgFrameCaptureTask, "DualImgFrameCapture", 4096, &camera, 1, NULL, 0); // pin dual image streaming task to Core 0
+    #endif
 
     digitalWrite(ONBOARD_LED_PIN, LOW); // turn on onboard LED to indicate ready state
     camera.setResolution('h'); // start with high resolution
@@ -268,6 +363,8 @@ void setup() {
 
 void loop() {
     webSocketServer.loop();
+    EspSerial.listenToMsg();
+
     unsigned long now = millis();
 
     // request distance reading at regular intervals
@@ -286,9 +383,11 @@ void loop() {
       lastDevuceStatsSendTime = now;
     }
 
-    // handle image streaming
+    // handle single image streaming
     if(camera.frameReady){
-      sendFrameUDP(camera.latestFb);
+      const uint16_t dist_cm = dist_mm/10;
+      imgFrameID++;
+      sendImgFrameUDP(camera.latestFb, dist_cm, 0, imgFrameID);
       camera.clearFrameBuffer();
       camera.frameReady = false;
     }
@@ -343,7 +442,6 @@ void loop() {
 
     // read touch sensors and emit events
     int touchState = touch.getTouchState();
-
     switch(touchState){
       case 1: // single tap
         webSocketServer.broadcastTXT("$#TXT#$touch1_single");
@@ -362,5 +460,5 @@ void loop() {
         break;
     }
 
-    vTaskDelay(1 / portTICK_PERIOD_MS); // gives esp32 some breathing space
+    vTaskDelay(pdMS_TO_TICKS(5)); // gives esp32 some breathing space
 }

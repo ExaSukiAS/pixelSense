@@ -98,19 +98,19 @@ class Camera{
         void frameCaptureTask(){
             for(;;){
                 if(!imageStreamingStarted){
-                    vTaskDelay(50 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(5));
                     continue;
                 }
 
                 //  wait until previous frame is sent
                 if(frameReady){
-                    vTaskDelay(1);
+                    vTaskDelay(pdMS_TO_TICKS(5));
                     continue;
                 }
 
                 camera_fb_t *fb = esp_camera_fb_get();
                 if(!fb){
-                    vTaskDelay(5);
+                    vTaskDelay(pdMS_TO_TICKS(5));
                     continue;
                 }
                 latestFb = fb;

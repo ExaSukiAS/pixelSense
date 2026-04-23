@@ -8,7 +8,7 @@ import queue
 import time
 
 class ESP32:
-    def __init__(self, espIP, boardType, imgPort, micPort, statsPort, onConnect=None, onMessage=None, onImage=None, onMicSamples=None, onStats=None):
+    def __init__(self, espIP, boardType, imgPort, micPort, statsPort, onConnect=None, onMessage=None, onImage=None, onSyncedImage=None, onMicSamples=None, onStats=None):
         self.espIP = espIP
         self.boardType = boardType
         self.espWsPort = 9000
@@ -25,6 +25,7 @@ class ESP32:
 
         self.onMessage = onMessage
         self.onImage = onImage
+        self.onSyncedImage = onSyncedImage
         self.onMicSamples = onMicSamples
         self.onConnect = onConnect
         self.onStats = onStats
@@ -78,12 +79,17 @@ class ESP32:
         buffers = {} # structure: {frameID: bytearray(), frameID: bytearray(), ...}
 
         while True:
-            data, addr = self.imgUDP.recvfrom(1500)
+            data, addr = self.imgUDP.recvfrom(4096)
 
-            # get valid data packets only [(6B header) & jpg chunk]
-            if len(data) >= 6:
-                frameID, offset = struct.unpack("<HI", data[:6]) # fetch header (2B for frameID and 4B for offset)
-                payload = data[6:] # jpg chunk
+            # get valid data packets only [(9B header) & jpg chunk]
+            if len(data) >= 9:
+                headerData = struct.unpack("<HIBH", data[:9]) # fetch header [2-byte frame id][4-byte offset][1-byte image type (0 for single capture and 1 for dual capture)][2-byte TOF distance]
+                frameID = headerData[0]
+                offset = headerData[1]
+                frameType = headerData[2]
+                dist_cm = headerData[3]
+
+                payload = data[9:] # jpg chunk
 
                 if frameID not in buffers:
                     buffers[frameID] = bytearray(200000)
@@ -94,8 +100,12 @@ class ESP32:
                 if payload[-2:] == b'\xff\xd9':
                     image = buffers[frameID][:offset+len(payload)]
 
-                    if self.onImage:
-                        self.onImage(self.boardType, image)
+                    if frameType == 0: # single capture
+                        if self.onImage:
+                            self.onImage(self.boardType, image)
+                    elif frameType == 1: # dual capture with TOF distance
+                        if self.onSyncedImage:
+                            self.onSyncedImage(self.boardType, image, frameID, dist_cm)
 
                     del buffers[frameID]
     
@@ -105,7 +115,7 @@ class ESP32:
         self.micSampleUDP.bind(("0.0.0.0", self.micSampleReceivingPort))
 
         while True:
-            data, addr = self.micSampleUDP.recvfrom(1024)
+            data, addr = self.micSampleUDP.recvfrom(2048)
 
             if data:
                 # resample 8khz incoming audio samples into 16khz audio
@@ -118,14 +128,14 @@ class ESP32:
     
     def requestMicSampleStream(self):
         if self.websocketConnected and self.ws and self.loop and self.loop.is_running():
-            asyncio.run_coroutine_threadsafe(self.ws.send("startAudioStream"), self.loop)
+            asyncio.run_coroutine_threadsafe(self.ws.send("strtMicStream"), self.loop)
             return True
         print("Connection not ready for mic samples request.")
         return False
     
     def stopMicSampleStream(self):
         if self.websocketConnected and self.ws is not None and self.loop:
-            asyncio.run_coroutine_threadsafe(self.ws.send("stopAudioStream"), self.loop)
+            asyncio.run_coroutine_threadsafe(self.ws.send("stpMicStream"), self.loop)
             return True
         print("Connection not ready for stopping mic samples stream.")
         return False
@@ -136,7 +146,7 @@ class ESP32:
         self.statsUDP.bind(("0.0.0.0", self.statsReceivingPort))
 
         while True:
-            data, addr = self.statsUDP.recvfrom(64)
+            data, addr = self.statsUDP.recvfrom(2048)
 
             if len(data) == 32:
                 stats = struct.unpack("<8i", data)

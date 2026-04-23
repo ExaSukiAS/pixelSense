@@ -11,7 +11,7 @@ from STThandler import STT
 from halo import Halo
 
 # gemini configuration
-geminiKeyToUse = "6"
+geminiKeyToUse = "3"
 
 currentMode = None # current mode (.freeform, .coord, .txt_rec, .img_des, .obj_dtc, streaming, None)
 currentImage = None
@@ -149,7 +149,7 @@ def espMessageHandler(boardType, message):
         esp.requestCapture("captureHigh")
     elif message == "$#TXT#$touch2_hold":
         guiServer.sendMessage("activate", "terminateTask")
-        esp.requestCapture("stopImageStream")
+        esp.requestCapture("stpSingleImgStream")
     """
 
 def espStatsHandler(boardType, stats):
@@ -244,6 +244,34 @@ def espImageHandler(boardType, image):
             lastSendTime = time.time()
     return
 
+# store the incoming frames until both left and right frames are received for dual capture
+# Structure: {frameID: {"left": {imageData, TOF distance}, "right": {imageData, TOF distance}}}
+syncedImagePairs = {} 
+def espSyncedImageHandler(boardType, image, frameID, dist_cm):
+    if frameID is not None:
+        # create the basic structure for the frameID if it doesn't exist
+        if frameID not in syncedImagePairs:
+            syncedImagePairs[frameID] = {"left": None, "right": None}
+
+        syncedImagePairs[frameID][boardType] = {"image": image, "dist_cm": dist_cm} # store the image and TOF distance for the corresponding board type
+
+        # check if both left and right frames are received for the frameID
+        if syncedImagePairs[frameID]["left"] is not None and syncedImagePairs[frameID]["right"] is not None:
+            leftData = syncedImagePairs[frameID]["left"]
+            rightData = syncedImagePairs[frameID]["right"]
+
+            # send the synchronized images and their TOF distances to the GUI
+            
+            leftPrefix = b'\x01' # prefix for left image
+            leftImgWithHeader = leftPrefix + leftData["image"]
+            rightPrefix = b'\x02' # prefix for right image
+            rightImgWithHeader = rightPrefix + rightData["image"]
+
+            guiServer.sendMessage("IMG", leftImgWithHeader)
+            guiServer.sendMessage("IMG", rightImgWithHeader)
+
+            del syncedImagePairs[frameID] # remove the pair from storage after processing to free up memory
+
 def onMicSampleHandler(boardType, samples):
     stt.feedAudioSamples(samples)
 
@@ -296,12 +324,12 @@ def onGUIclientMessage(message):
 
     elif message == ".coord":
         currentMode = message
-        espLeft.requestCapture("startImageStream")
+        espLeft.requestCapture("strtSingleImgStream")
         guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
         guiServer.sendMessage("loader", "15@#$@Fetching image")
 
     elif message == 'terminate':
-        espLeft.stopAudioStream()
+        espLeft.stopMicSampleStream()
 
         # reset variables and objects
         global trackedObjName, trackerInitialized, tracker, coordRunning
@@ -311,7 +339,7 @@ def onGUIclientMessage(message):
         tracker = None
 
         if coordRunning:
-            espLeft.requestCapture("stopImageStream")
+            espLeft.requestCapture("stpSingleImgStream")
 
         coordRunning = False
 
@@ -321,33 +349,47 @@ def onGUIclientMessage(message):
     elif message == 'startLeftImageStream':
         currentMode = "streaming"
         streamingState["left"] = True
-        espLeft.requestCapture("startImageStream")
+
+        # switch to synced dual streaming if boath ESP need to stream image
+        if streamingState["left"] and streamingState["right"]:
+            espRight.requestCapture("stpSingleImgStream")
+            time.sleep(2)
+            espLeft.requestCapture("strtDualImgStream")
+        else:
+            espLeft.requestCapture("strtSingleImgStream")
     elif message == 'stopLeftImageStream':
         streamingState["left"] = False
-        espLeft.requestCapture("stopImageStream")
+        espLeft.requestCapture("stpSingleImgStream")
     elif message == 'startRightImageStream':
         currentMode = "streaming"
         streamingState["right"] = True
-        espRight.requestCapture("startImageStream")
+
+        # switch to synced dual streaming if boath ESP need to stream image
+        if streamingState["left"] and streamingState["right"]:
+            espLeft.requestCapture("stpSingleImgStream")
+            time.sleep(2)
+            espLeft.requestCapture("strtDualImgStream")
+        else:
+            espRight.requestCapture("strtSingleImgStream")
     elif message == 'stopRightImageStream':
         streamingState["right"] = False
-        espRight.requestCapture("stopImageStream")
+        espRight.requestCapture("stpSingleImgStream")
 
 if __name__ == '__main__':
     import multiprocessing
     multiprocessing.freeze_support() 
 
     # gemini objects
-    geminiClientFast = GeminiClient(geminiAPIkey, "gemini-2.0-flash-lite", onContentChunk=fastGeminiResponseHandler)
-    geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.0-flash", onContentChunk=coordGeminiResponseHandler)
+    geminiClientFast = GeminiClient(geminiAPIkey, "gemini-2.5-flash-lite", onContentChunk=fastGeminiResponseHandler)
+    geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.5-flash", onContentChunk=coordGeminiResponseHandler)
 
     # start GUI server
     guiServer = GUI(onConnect=onGUIclientConnect, onMessage=onGUIclientMessage)
     guiServer.start()
 
     # start esp32 websocket client
-    espLeft = ESP32(espIP="192.168.68.102", boardType="left", imgPort=5005, micPort=5006, statsPort=5007, onConnect=onespConnect, onMessage=espMessageHandler, onMicSamples=onMicSampleHandler, onImage=espImageHandler, onStats=espStatsHandler)
-    espRight = ESP32(espIP="192.168.68.104", boardType="right", imgPort=5008, micPort=5009, statsPort=5010, onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onStats=espStatsHandler)
+    espLeft = ESP32(espIP="192.168.68.104", boardType="left", imgPort=5005, micPort=5006, statsPort=5007, onConnect=onespConnect, onMessage=espMessageHandler, onMicSamples=onMicSampleHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
+    espRight = ESP32(espIP="192.168.68.102", boardType="right", imgPort=5008, micPort=5009, statsPort=5010, onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
     espLeft.start()
     espRight.start()
 

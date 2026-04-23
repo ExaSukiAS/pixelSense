@@ -84,11 +84,11 @@ class Microphone{
             for(;;){
                 if(!audioStreamingStarted){
                     sampleCount = 0;
-                    vTaskDelay(10);
+                    vTaskDelay(pdMS_TO_TICKS(10));
                     continue;
                 }
                 if(audioSamplesReady){
-                    vTaskDelay(1);
+                    vTaskDelay(pdMS_TO_TICKS(2));
                     continue;
                 }
 

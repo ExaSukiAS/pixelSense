@@ -1,0 +1,17 @@
+Initial setup:
+    Server sends "startDualStream" only to the Left ESP
+    Left ESP sends "startDualStream" to Right ESP:
+        if Right ESP is already streaming:
+        Then it responds back to Left ESP by sending "dualStreamReady"
+
+After Left ESP receives "dualStreamReady" from Right ESP:
+S1.    Before capturing an image frame, Left ESP sends "capture,frameID" to Right ESP
+S2.    Both Left and Right ESP capture the frame and TOF distance at the same time and send the image along with TOF distance to the server with the same frameID:
+            image sending structure: [9-byte header][image payload]
+                header structure: [2-byte frame id][4-byte offset][1-byte image type (0 for single capture and 1 for dual capture)][2-byte TOF distance (integer)]
+S3.    After frame packets are sent to server by Right ESP, it sends "frameSent" to Left ESP:
+            In the moment of receiving the message "frameSent" from Right ESP, the Left ESP may or may not have sent the frame packets to server:
+                If Left ESP has sent the frame packets to server, then it will loop back to S1
+                else if Left ESP hasn't sent the frame packets to server, it will first send the frame packets, then will loop back to S1
+
+N.B. in the communication between Left and Right ESP, Left ESP acts as the Master and Right ESP acts as the Slave

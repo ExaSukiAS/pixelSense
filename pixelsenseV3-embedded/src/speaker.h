@@ -94,7 +94,7 @@ class Speaker{
         void audioPlayingTask(){
             for (;;) {
                 if (lockI2Sport) {
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(10));
                     continue;
                 }
 
@@ -105,7 +105,7 @@ class Speaker{
                     isBuffering = true;
                     head = tail;   // clear software buffer
 
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(10));
                     continue;
                 }
 
@@ -116,13 +116,13 @@ class Speaker{
                     if (available >= prefillThresh) {
                         isBuffering = false;
                     } else {
-                        vTaskDelay(10 / portTICK_PERIOD_MS);
+                        vTaskDelay(pdMS_TO_TICKS(10));
                         continue; 
                     }
                 }
                 if (available < 256) {
                     if (available == 0) isBuffering = true; 
-                    vTaskDelay(2 / portTICK_PERIOD_MS);
+                    vTaskDelay(pdMS_TO_TICKS(2));
                     continue;
                 }
 
