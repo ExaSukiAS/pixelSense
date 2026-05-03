@@ -15,7 +15,7 @@ class STT:
             device="cpu",
             language="en",
             use_microphone=False,
-            spinner=False
+            spinner=False,
         )
         print(colored("STT initialized!", "light_green"))
 

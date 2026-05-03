@@ -49,7 +49,7 @@ class Camera{
             config.pixel_format = PIXFORMAT_JPEG;
 
             config.frame_size = FRAME_SIZE_LOW;
-            config.jpeg_quality = 20;
+            config.jpeg_quality = 10;
             config.fb_count = 2;
             config.grab_mode = CAMERA_GRAB_LATEST;
             config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -63,7 +63,7 @@ class Camera{
             sensor_t *s = esp_camera_sensor_get();
             if (s) {
                 s->set_framesize(s, FRAME_SIZE_LOW);
-                s->set_quality(s, 20);
+                s->set_quality(s, 10); // (0-63, lower means higher quality)
             }
         }
 

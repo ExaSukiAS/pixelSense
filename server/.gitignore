@@ -1,3 +1,7 @@
 __pycache__/
 geminiAPI.json
 tests/
+camCalibImages/
+camSampleImages/
+AImodels/
+realtimesst.log

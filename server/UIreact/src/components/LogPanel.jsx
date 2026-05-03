@@ -1,5 +1,4 @@
 export const LogPanel = ({log, taskPercentage, content}) =>{
-    console.log(log, taskPercentage);
     return(
         <div className="log-panel">
             <div className="panel-header">

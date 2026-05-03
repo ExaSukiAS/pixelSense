@@ -35,7 +35,7 @@ export const DevInfo = ({resources, info, heading}) => {
                 {infoTitles.map((title) => {
                     const data = info[title];
                     return(
-                        <div className="telemetry-item">
+                        <div className="telemetry-item" key={title}>
                             <span className="label">{title}</span>
                             <span className="value primary">{`${data.value}${data.unit}`}</span>
                         </div>

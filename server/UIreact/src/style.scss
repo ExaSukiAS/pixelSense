@@ -356,13 +356,14 @@ $font-body: 'Manrope', sans-serif;
 // ==========================================
 .video-feed {
   position: relative;
-  aspect-ratio: 16 / 9;
-  border-radius: 0.75rem;
+  aspect-ratio: 4 / 3;
+  border-radius: 0;
   overflow: hidden;
   background-color: $surface-container-lowest;
   border: 1px solid rgba($outline-variant, 0.6);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
   display: inline-block;
+  transition: .2s;
 
   .feed-image {
     width: 100%;
@@ -409,6 +410,12 @@ $font-body: 'Manrope', sans-serif;
       height: 2px;
       background: $error;
       transform-origin: left center;
+  }
+
+  &.capture-flash{
+    transform: scale(0.8);
+    border: 2px solid $primary;
+    z-index: 10;
   }
 }
 
@@ -725,6 +732,27 @@ $font-body: 'Manrope', sans-serif;
   .material-symbols-outlined{
     font-size: 20px;
   }
+}
+
+.mouse-coordinate-tooltip{
+    position: fixed;
+    pointer-events: none;
+
+    padding: 6px 10px;
+
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+
+    font-size: 12px;
+    font-family: $font-headline;
+    white-space: pre;
+
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+
+    backdrop-filter: blur(6px);
+
+    z-index: 999999;
 }
 
 // ==========================================

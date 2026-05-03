@@ -7,7 +7,7 @@ class Tracker:
     def __init__(self, firstFrame, roi_normalized, minConfidenceThreshold, useRecovery):
         self.processingFrame = False # indicates if a current frame is being processed in getCoordinates() function
 
-        self.firstFrameRGB, self.firstFrameBGR, self.imgHeight, self.imgWidth = self.decodeImage(firstFrame)
+        self.firstFrameRGB, self.firstFrameBGR, self.imgHeight, self.imgWidth = self._decodeImage(firstFrame)
         # convert 0 - 1000 scale normalized rio to pixel format
         x_min_n, y_min_n, x_max_n, y_max_n = roi_normalized
         x_min = int((x_min_n / 1000.0) * self.imgWidth)
@@ -44,10 +44,13 @@ class Tracker:
     
     # returns predicted coordinates of hand and object
     def getCoordinates(self, frame):
+        if self.processingFrame:
+            return None, None # skip if currently processing a frame to avoid overlapping computations
+
         self.processingFrame = True
 
         try:
-            frameRGB, frameBGR, frameHeight, frameWidth = self.decodeImage(frame)
+            frameRGB, frameBGR, frameHeight, frameWidth = self._decodeImage(frame)
 
             if frameBGR is None or frameWidth == 0 or frameHeight == 0:
                 print("Invalid frame received")
@@ -95,8 +98,10 @@ class Tracker:
                 h_n = int((h / frameHeight) * 1000)
 
                 normalizedHandCoord = (x_n, y_n, w_n, h_n)
+            
+            grabDirection = self._getGrabDirection(normalizedObjCoord, normalizedObjCoord)
 
-            return normalizedHandCoord, normalizedObjCoord
+            return normalizedHandCoord, normalizedObjCoord, grabDirection
 
         except Exception as e:
             print(f"Error in getCoordinates(): {e}")
@@ -106,9 +111,44 @@ class Tracker:
             self.processingFrame = False
 
     # decodes JPEG bytes to RGB image, also returns image height and width
-    def decodeImage(self, frame):
+    def _decodeImage(self, frame):
         nparr = np.frombuffer(frame, np.uint8)
         frameBGR = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         frameRGB = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2RGB)
         imgHeight, imgWidth, _ = frameRGB.shape
         return (frameRGB, frameBGR, imgHeight, imgWidth)
+    
+    def _getGrabDirection(self, objCoords, handCoords):
+        """
+        Calculates the direction the hand needs to move to grab the object.
+        Assuming coords are (x, y, width, height).
+        Returns: "left", "right", "top", "bottom", or "unknown"
+        """
+
+        if objCoords and handCoords:
+            objx, objy, objw, objh = objCoords
+            handx, handy, handw, handh = handCoords
+            
+            # Calculate center points 
+            obj_cx = objx + (objw / 2)
+            obj_cy = objy + (objh / 2)
+            
+            hand_cx = handx + (handw / 2)
+            hand_cy = handy + (handh / 2)
+            
+            # Difference vector from hand to object
+            dx = obj_cx - hand_cx
+            dy = obj_cy - hand_cy
+
+            if abs(dx) > abs(dy):
+                if dx > 0:
+                    return "right" 
+                else:
+                    return "left" 
+            else:
+                if dy > 0:
+                    return "bottom" 
+                else:
+                    return "top"  
+        else:
+            return "unknown"

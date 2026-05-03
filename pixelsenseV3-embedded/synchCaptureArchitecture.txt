@@ -1,3 +1,4 @@
+Image stream sync:
 Initial setup:
     Server sends "startDualStream" only to the Left ESP
     Left ESP sends "startDualStream" to Right ESP:
@@ -15,3 +16,44 @@ S3.    After frame packets are sent to server by Right ESP, it sends "frameSent"
                 else if Left ESP hasn't sent the frame packets to server, it will first send the frame packets, then will loop back to S1
 
 N.B. in the communication between Left and Right ESP, Left ESP acts as the Master and Right ESP acts as the Slave
+
+
+Audio playback sync:
+Server sends audio samples to Left and Right ESP. Each packet contains 500samples (1000B). Packet structure: [4B header (packet id only)][payload]
+An ESP receives a packet from server:
+    S1. The ESP sends "audioPktRecvd, packetID" to the other ESP
+    S2. The ESP checks if the ID of the audio packet received from server exists in "audioPktToRecv" array:
+        If the packet id exists:
+            It will play the audio samples that is just received
+        else:
+            The ESP stores the packet payload in the array named "pendingPlaybleAudioPkts" and stores the packet id in "pendingPlaybleAudioPktIDs" array
+
+An ESP receives "audioPktRecvd, packetID" from the other ESP:
+    S1. The ESP checks if it has already received the packet from server by looking at the pendingPlaybleAudioPktIDs array:
+        If it has received the packet from server:
+            It will play the audio samples belonging to the packet. Audio samples are fetched from pendingPlaybleAudioPkts array
+        else:
+            It will store the packet id in "audioPktToRecv" array
+
+N.B. audio syncronization only happens between two ESP32. Here, no ESP acts as master or slave, both are equal.
+     Sometimes(or very often due to UDP streaming from server to ESPs) one ESP can completely miss a packet. In that cause, ise a timeout of 1.5second so that the audioPktRecvd, pendingPlaybleAudioPkts and pendingPlaybleAudioPktIDs don't fill up with garbage data overtime
+
+Examples flow of audio playback syncronization:
+1. Server sends audio packets to both ESPs 
+2. Left ESP receives the audio packet first from server:
+    i. It fetches the audio packet id from the first 4B of the packet. 
+    ii. It sends "audioPktRecvd, audioPacketID" to Right ESP through UART -> step 3
+    iii. audioPktToRecv array is empty now, as Left ESP is the first one to receive the packet.
+         So, it stores the packet payload in pendingPlaybleAudioPkts array and stores the packet id in pendingPlaybleAudioPktIDs array
+3. Right ESP receives "audioPktRecvd, packetID" message from Left ESP throughh UART:
+    i. pendingPlaybleAudioPktIDs arrays is empty now, as Right ESP hasn't received any audio packet yet from teh server.
+       So, it stores the packet id in audioPktToRecv array.
+4. The Right ESP has received an audio packet from server:
+    i. It fetches the audio packet id from the first 4B of the packet. 
+    ii. It sends "audioPktRecvd, audioPacketID" to Right ESP through UART -> step 5
+    iii. audioPktToRecv array contains one packet id, and it matches with the packet id just received from server.
+        So, it plays the samples fetched from the packet payload and also deletes the packet id from audioPktToRecv array.
+5. Left ESP receives "audioPktRecvd, packetID"message from Right ESP throughh UART:
+    i. pendingPlaybleAudioPktIDs has one packet id, and it matches with the packet id received from Right ESP
+        So, Left ESP plays the the samples corresponding to the packet id from pendingPlaybleAudioPkts array and also deletes the packet id from pendingPlaybleAudioPktIDs and the corresponding from pendingPlaybleAudioPkts
+6. Loop back to step 1, this time, Right ESP may have received the packet first, but the core logic remains the same, just boards are switched now.

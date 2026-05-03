@@ -1,6 +1,6 @@
 export const StreamButton = ({status, onClick}) =>{
     return (
-        <div class = "streamButtons">
+        <div className = "streamButtons">
             <button className="btn btn-primary" onClick={() => onClick("left")}>
                 <span className="material-symbols-outlined icon">videocam</span> 
                 {status.left ? "Stop Left Stream" : "Stream Left"}

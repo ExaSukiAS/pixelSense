@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { CameraFeed } from "./components/CameraFeed";
 import { ConnectionIndicators } from "./components/ConnectionIndicators";
 import { FeatureMatrix } from "./components/FeatureMatrixBtn";
@@ -10,13 +10,16 @@ import { ViewControlCard } from "./components/ViewControl";
 import { BatteryIndicator } from "./components/batteryIndicator";
 
 function App() { 
+  const sampleImgCaptureKey = "s";
+  const calibImgCaptureKey = "c";
+
   const [featureMatrixButtons, setFeatureButton] = useState({
     "Text Recognition": {"icon": "text_fields", "isActive": false},
     "Object Detection": {"icon": "target","isActive": false},
     "Image Desc": {"icon": "image_search","isActive": false},
     "Freeform": {"icon": "draw","isActive": false},
-    "Coordination": {"icon": "account_tree","isActive": false},
-    "AI Chat": {"icon": "chat","isActive": false}
+    "Coordination": {"icon": "view_in_ar","isActive": false},
+    "Depth Estimation": {"icon": "forest", "isActive": false}
   });
 
   const [ESPresources, setESPresources] = useState({
@@ -51,9 +54,18 @@ function App() {
   const [viewState, setViewState] = useState({left: true, right: true, depth: true});
   const [frameWidth, setFrameWidth] = useState({left: 49, right: 49, depth: 49});
 
-  useEffect(() =>{
-    
-  }, [viewState])
+  const currentFrameID = useRef(0); // to keep track of the current frameID for incoming images
+
+  const leftCamRef = useRef();
+  const rightCamRef = useRef();
+  const depthCamRef = useRef();
+
+  const viewMouseActiveStatus = useRef({right: false, depth: false}); // tracks if teh mouse is within the depth view or left view area
+
+  const mouseTooltipRef = useRef(null);
+  const mousePosRef = useRef({ x: 0, y: 0 });
+
+  let depthMap = useRef(null); // tracks the latest depth map array sent by python process
 
   // activates or deactivates a feature button
   const setFeatureActive = (name, value) => {
@@ -75,8 +87,8 @@ function App() {
       "Object Detection": {"icon": "target","isActive": false},
       "Image Desc": {"icon": "image_search","isActive": false},
       "Freeform": {"icon": "draw","isActive": false},
-      "Coordination": {"icon": "account_tree","isActive": false},
-      "AI Chat": {"icon": "chat","isActive": false}
+      "Coordination": {"icon": "view_in_ar","isActive": false},
+      "Depth Estimation": {"icon": "forest", "isActive": false}
     })
   };
 
@@ -112,8 +124,8 @@ function App() {
           case ".coord":
               setFeatureActive("Coordination", true);
               break;
-          case ".ai_chat":
-              setFeatureActive("AI Chat", true);
+          case ".depth_est":
+              setFeatureActive("Depth Estimation", true);
               break;
           case "terminateTask":
               terminateTask();
@@ -156,17 +168,24 @@ function App() {
       setBbox(coordinate);
     }
 
-    handleImg(image, imageTypeInt){ // imageTypeInt can be : 1 for left view, 2 for right view and 3 for depth view
-      // change teh specific image
+    handleImg(image, imageTypeInt, frameID){ // imageTypeInt can be : 1 for left view, 2 for right view and 3 for depth view
+      currentFrameID.current = frameID;
+
+      // change the specific image
       setCamBuffer(prevBuffer => 
         prevBuffer.map((item, index) => 
           index === imageTypeInt-1 ? image : item
         )
       );
     }
+
+    handleDepthMap(map){
+      depthMap.current = map;
+    }
   }
 
-  const initApp = () =>{
+  // initialize socket connection and handlers once on component mount
+  useEffect(() => {
     const socketHandler = new Socket();
     setupSocket(
       socketHandler.handleActivationMsg, 
@@ -174,10 +193,35 @@ function App() {
       socketHandler.handleStats,
       socketHandler.handleLoader,
       socketHandler.handleCoordinate, 
-      socketHandler.handleImg
+      socketHandler.handleImg,
+      socketHandler.handleDepthMap,
     );
-  }
-  useEffect(() => {initApp()}, []);
+  }, []);
+
+  // handle global keyboard clicks
+  useEffect(() => {
+    const handleGlobalKeyDown = (event) => {
+      // Check if refs are available before calling methods
+      const canCapture = leftCamRef.current && rightCamRef.current;
+
+      if (event.key === calibImgCaptureKey) {
+        socket.send("saveImg_calib," + currentFrameID.current);
+        if (canCapture) {
+          leftCamRef.current.indicateCapture();
+          rightCamRef.current.indicateCapture();
+        }
+      } else if (event.key === sampleImgCaptureKey) {
+        socket.send("saveImg_sample," + currentFrameID.current);
+        if (canCapture) {
+          leftCamRef.current.indicateCapture();
+          rightCamRef.current.indicateCapture();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [calibImgCaptureKey, sampleImgCaptureKey]);
 
   class ButtonClicksHandler{
     constructor(){}
@@ -199,8 +243,8 @@ function App() {
         case "Coordination":
           socket.send(".coord");
           break;
-        case "AI Chat":
-          socket.send(".ai_chat");
+        case "Depth Estimation":
+          socket.send(".depth_est");
           break;
         default:
           console.warn(`Unknown feature: ${buttonName}`);
@@ -237,6 +281,71 @@ function App() {
   }
   const buttonClick = new ButtonClicksHandler();
 
+  // Handle mouse events within depth and left view areas
+  class ImgMouseEventHandler{
+    constructor(){}
+
+    createTooltip = (x, y, text) => {
+      if(!mouseTooltipRef.current){
+        const div = document.createElement("div");
+        div.className = "mouse-coordinate-tooltip";
+        document.body.appendChild(div);
+        mouseTooltipRef.current = div;
+      }
+
+      mouseTooltipRef.current.innerText = text;
+      mouseTooltipRef.current.style.left = `${x + 6}px`;
+      mouseTooltipRef.current.style.top = `${y + 6}px`;
+    }
+
+    removeTooltip = () => {
+      if(mouseTooltipRef.current){
+        mouseTooltipRef.current.remove();
+        mouseTooltipRef.current = null;
+      }
+    }
+
+    handleMouseEnter = (feedName) => {
+      viewMouseActiveStatus.current = {
+        ...viewMouseActiveStatus.current,
+        [feedName]: true
+      };
+
+      document.body.style.cursor = "crosshair";
+    }
+
+    handleMouseLeave = (feedName) => {
+      viewMouseActiveStatus.current = {
+        ...viewMouseActiveStatus.current,
+        [feedName]: false
+      };
+
+      document.body.style.cursor = "default";
+
+      this.removeTooltip();
+    }
+
+    handleMousePosChange = (feedName, xNorm, yNorm, event) => {
+      mousePosRef.current = {
+        x: event.clientX,
+        y: event.clientY
+      };
+
+      if(depthMap.current){
+        const x = Math.floor(xNorm * 640);
+        const y = Math.floor(yNorm * 480);
+        const depth = depthMap.current[y * 640 + x]/10; // in cm
+
+        this.createTooltip(
+          event.clientX,
+          event.clientY,
+          `${depth} cm`
+        );
+      }
+    }
+  }
+  const imgMouseEventHandler = new ImgMouseEventHandler();
+
   return (
     <>
       <header className="top-bar">
@@ -262,13 +371,13 @@ function App() {
             <div className="grid-primary">
               <div className="cameraFeedGrid">
                 <div className="cameraFrame" style={{display: viewState.left ? "flex" : "none", width: `${frameWidth.left}%`}}>
-                  <CameraFeed buffer={cameraBuffer[0]} normalizedBbox={boundingBox}></CameraFeed> 
+                  <CameraFeed feedName={"left"} ref={leftCamRef} buffer={cameraBuffer[0]} normalizedBbox={boundingBox}></CameraFeed> 
                 </div>
                 <div className="cameraFrame" style={{display: viewState.right ? "flex" : "none", width: `${frameWidth.right}%`}}>
-                  <CameraFeed buffer={cameraBuffer[1]} normalizedBbox={boundingBox}></CameraFeed> 
+                  <CameraFeed feedName={"right"} ref={rightCamRef} buffer={cameraBuffer[1]} normalizedBbox={[]} onMouseEnter={imgMouseEventHandler.handleMouseEnter} onMouseLeave={imgMouseEventHandler.handleMouseLeave} onMousePosChange={imgMouseEventHandler.handleMousePosChange}></CameraFeed> 
                 </div>
                 <div className="cameraFrame" style={{display: viewState.depth ? "flex" : "none", width: `${frameWidth.depth}%`}}>
-                  <CameraFeed buffer={cameraBuffer[2]} normalizedBbox={boundingBox}></CameraFeed> 
+                  <CameraFeed feedName={"depth"} ref={depthCamRef} buffer={cameraBuffer[2]} normalizedBbox={[]} onMouseEnter={imgMouseEventHandler.handleMouseEnter} onMouseLeave={imgMouseEventHandler.handleMouseLeave} onMousePosChange={imgMouseEventHandler.handleMousePosChange}></CameraFeed> 
                 </div>
               </div>
               <LogPanel log={logPanelContent.log} taskPercentage={logPanelContent.taskPercentage} content={logPanelContent.content}></LogPanel>

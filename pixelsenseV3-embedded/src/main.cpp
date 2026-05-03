@@ -12,7 +12,7 @@ but pin layout and some parameters will be different based on the board
 'L' board acts as the Master and 'R' board acts as the Slave during Synced Dual Image Streaming
 change the value of BOARD_TYPE to switch between the two boards before uploading the code
 */
-#define BOARD_TYPE 'L'
+#define BOARD_TYPE 'R'
 
 // custom
 #include "speaker.h"
@@ -29,7 +29,7 @@ change the value of BOARD_TYPE to switch between the two boards before uploading
 #endif
 
 // WiFi credentials
-const char* ssid = "Amartya";
+const char* ssid = "EXA_desktop";
 const char* password = "amartya@@2020";
 
 // static pins (same on left and right boards)
@@ -73,7 +73,7 @@ Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 TouchSensor touch(TOUCH_PIN);
 
 // mic and speaker objects
-Speaker speaker(SPEAKER_CLK_PIN, SPEAKER_WS_PIN, SPEAKER_DATA_PIN, 1.5);
+Speaker speaker(SPEAKER_CLK_PIN, SPEAKER_WS_PIN, SPEAKER_DATA_PIN, 2.0);
 Microphone mic(MIC_WS_PIN, MIC_DATA_PIN, 5.0);
 
 // laser distance sensor variables
@@ -174,11 +174,14 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       // these condition only executes in left esp: 
       #if BOARD_TYPE == 'L'
         if (msg == "strtDualImgStream"){
+            Serial.println("Starting Dual Stream...");
             imgFrameID = 0; // reset imgFrame id to prevent overflow over long term streams
             // stop single streaming
             if(camera.imageStreamingStarted){
               toggleSingleImgStream(false);
             }
+
+            camera.setResolution('l'); 
             EspSerial.requestDualStream(); // tell right esp to initialize dual stream
           
         } else if (msg == "stpDualImgStream"){
@@ -208,7 +211,7 @@ void processUDPAudioData() {
     if (nextHead != speaker.tail) { 
       speaker.jitterBuffer[speaker.head] = sample;
       speaker.head = nextHead;
-      speaker.lastSampleTime = millis();   // update last audio arrival time
+      speaker.lastSampleTime = millis(); // update last audio arrival time
     }
   }
 }
@@ -229,7 +232,7 @@ void sendImgFrameUDP(camera_fb_t *fb, uint16_t dist_cm, uint8_t imgFrameType, ui
       udpServer.write(fb->buf + offset, chunk);       // actual payload
       udpServer.endPacket();
 
-      delay(7); // 7ms delay to avoid WiFi packet congestion
+      vTaskDelay(pdMS_TO_TICKS(10)); // small delay between packets to give esp32 some breathing space
     }
 }
 
@@ -303,6 +306,7 @@ void onEspMessage(String head, String tail){
       if(camera.imageStreamingStarted){
         toggleSingleImgStream(false);
       }
+      camera.setResolution('l');
       EspSerial.indicateDualStreamReady(); // reply to Left ESP (master) that Right ESP(slave) is ready for dual streaming
     } else if(head == "captureImg"){
       uint16_t syncedImgFrameID = tail.toInt(); // same imgFrame id as Left ESP(master) 
@@ -325,6 +329,13 @@ void setup() {
     
     camera.attach();
     speaker.attach();
+
+    // set unique hostnames for the two boards so that they can be easily identified on the network
+    #if BOARD_TYPE == 'L'
+      WiFi.setHostname("ESP32S3-Left");
+    #else
+      WiFi.setHostname("ESP32S3-Right");
+    #endif
 
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi

@@ -6,6 +6,7 @@ import struct
 import numpy as np
 import queue
 import time
+import cv2
 
 class ESP32:
     def __init__(self, espIP, boardType, imgPort, micPort, statsPort, onConnect=None, onMessage=None, onImage=None, onSyncedImage=None, onMicSamples=None, onStats=None):
@@ -56,10 +57,11 @@ class ESP32:
                 async for message in ws:
                     if isinstance(message, bytes):
                         if self.onImage:
-                            self.onImage(self.boardType, message)
+                            rotatedImage = self._rotateAndEvaluateImgBytes(message)
+                            self.onImage(self.boardType, rotatedImage)
                     else:
                         if self.onMessage:
-                            self.onMessage(self.boardType)
+                            self.onMessage(self.boardType, message)
         except Exception as e:
             print("Error from ESP32handler.py:", e)
 
@@ -70,44 +72,63 @@ class ESP32:
             return True
         print("Connection not ready for capture request.")
         return False
-    
+
     # listens for incoming image frames from ESP32
     def _imgListener(self):
         self.imgUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.imgUDP.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024) # increase OS UDP buffer size to 2MB to prevent drops under heavy CPU load
         self.imgUDP.bind(("0.0.0.0", self.imageReceivingPort))
 
-        buffers = {} # structure: {frameID: bytearray(), frameID: bytearray(), ...}
-
+        # structure: {frameID: {'data': bytearray, 'recvdBytes': int}}
+        buffers = {} 
+        
         while True:
             data, addr = self.imgUDP.recvfrom(4096)
 
-            # get valid data packets only [(9B header) & jpg chunk]
             if len(data) >= 9:
-                headerData = struct.unpack("<HIBH", data[:9]) # fetch header [2-byte frame id][4-byte offset][1-byte image type (0 for single capture and 1 for dual capture)][2-byte TOF distance]
+                headerData = struct.unpack("<HIBH", data[:9])
                 frameID = headerData[0]
                 offset = headerData[1]
                 frameType = headerData[2]
                 dist_cm = headerData[3]
+                payload = data[9:] # jpg data chunk
 
-                payload = data[9:] # jpg chunk
-
+                # Initialize buffer for new frame
                 if frameID not in buffers:
-                    buffers[frameID] = bytearray(200000)
+                    buffers[frameID] = {
+                        'data': bytearray(200000), 
+                        'recvdBytes': 0
+                    }
 
-                buffers[frameID][offset:offset+len(payload)] = payload # insert jpg chunk into correct location
+                buffers[frameID]['data'][offset : offset + len(payload)] = payload
+                buffers[frameID]['recvdBytes'] += len(payload)
 
-                # end of a full jpg image
+                # Check for JPEG EOI marker
                 if payload[-2:] == b'\xff\xd9':
-                    image = buffers[frameID][:offset+len(payload)]
+                    total_expected_size = offset + len(payload)
+                    
+                    # only return if received bytes match the last offset (a fully valid image)
+                    if buffers[frameID]['recvdBytes'] == total_expected_size:
+                        image = buffers[frameID]['data'][:total_expected_size]
+                        rotatedImage = self._rotateAndEvaluateImgBytes(image)
 
-                    if frameType == 0: # single capture
-                        if self.onImage:
-                            self.onImage(self.boardType, image)
-                    elif frameType == 1: # dual capture with TOF distance
-                        if self.onSyncedImage:
-                            self.onSyncedImage(self.boardType, image, frameID, dist_cm)
+                        if rotatedImage is not None:
+                            if frameType == 0: # single capture
+                                if self.onImage:
+                                    self.onImage(self.boardType, rotatedImage)
+                            elif frameType == 1: # dual capture with TOF distance
+                                if self.onSyncedImage:
+                                    self.onSyncedImage(self.boardType, rotatedImage, frameID, dist_cm)
+                    else:
+                        # drop corrupted/incomplete image
+                        pass
 
                     del buffers[frameID]
+
+            # memory leaks preventation
+            if len(buffers) > 10:
+                first_key = next(iter(buffers))
+                del buffers[first_key]
     
     # listens for incoming microphone samples from ESP32
     def _micSampleListener(self):
@@ -172,26 +193,43 @@ class ESP32:
         packetSize = 1000 
         
         # calculate exactly how much audio time is in one packet
-        # 500 samples / 12000 samples per second = ~0.04166 seconds
-        packet_duration = (packetSize / 2) / self.espSpeakerSamplingRate 
-        packet_id = 0
+        # 500 samples / 12000 samples/second = ~41.667 ms
+        pktDuration = (packetSize / 2) / self.espSpeakerSamplingRate 
+        pktID = 0
         startTime = time.time()
 
         for i in range(0, len(samples), packetSize):
             packet = samples[i:i+packetSize]
             
             # create the 4-byte header
-            data = struct.pack("I", packet_id) + packet
+            data = struct.pack("I", pktID) + packet
             udp.sendto(data, (self.espIP, self.espUDPport))
-            packet_id += 1
+            pktID += 1
             
-            expectedTime = startTime + (packet_id * packet_duration)
+            # calculate how long to sleep to maintain correct timing for audio stream
+            expectedTime = startTime + (pktID * pktDuration)
             sleepTime = expectedTime - time.time()
             
             # only sleep if we are actually ahead of schedule
             if sleepTime > 0:
                 time.sleep(sleepTime)
         return
+    
+    def _rotateAndEvaluateImgBytes(self, imgBytes):
+        # Check if jpg has SOI and EOI markers
+        if not imgBytes.startswith(b'\xff\xd8') or not imgBytes.endswith(b'\xff\xd9'):
+            return None
+
+        np_arr = np.frombuffer(imgBytes, np.uint8)
+        img_cv = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        
+        if img_cv is None:
+            return None 
+            
+        final_cv = cv2.flip(img_cv, 0) # This rotates 180 and de-mirrors
+        
+        success, encoded_img = cv2.imencode('.jpg', final_cv)
+        return encoded_img.tobytes() if success else None
         
 
     def start(self):

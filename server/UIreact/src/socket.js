@@ -9,16 +9,18 @@ let onActivationMsgFunc = null;
 let onLogMsgFunc = null;
 let onCoordinateMsgFunc = null;
 let onImageMsgFunc = null;
+let onDepthMapFunc = null;
 let onLoaderMsgFunc = null;
 let onStatsFunc = null;
 
-export const setupSocket = (onActivationMsg, onLogMsg, onStats, onLoaderMsg, onCoordinateMsg, onImage) =>{
+export const setupSocket = (onActivationMsg, onLogMsg, onStats, onLoaderMsg, onCoordinateMsg, onImage, onDepthMap) =>{
     onActivationMsgFunc = onActivationMsg;
     onLogMsgFunc = onLogMsg;
     onCoordinateMsgFunc = onCoordinateMsg;
     onImageMsgFunc = onImage;
     onLoaderMsgFunc = onLoaderMsg;
     onStatsFunc = onStats;
+    onDepthMapFunc = onDepthMap;
 
     connectToServer();
 }
@@ -88,18 +90,22 @@ const handleSocketMessage = (msgType, msg) => {
 const handleSocketBINmessage = (buffer) => {
     const view = new Uint8Array(buffer);
 
-    const socketHeader = view[0]; // websocket header
-    const imageTypeInt = parseInt(view[1]); // type of image (1 for left view, 2 for right view and 3 for depth view)
+    const firstByte = view[0];
+    const bufferType = view[1];
 
-    if (socketHeader == 1) { // check if it's a binary message
-        const imageData = buffer.slice(2);
+    // If your image messages have a header of 1:
+    if (firstByte == 1 && bufferType != 4) {
+        const frameID = (view[2] << 24) | (view[3] << 16) | (view[4] << 8) | view[5];
+        const imageData = buffer.slice(6);
         const blob = new Blob([imageData], { type: 'image/jpeg' });
 
-        if (currentImgUrl) {
-            URL.revokeObjectURL(currentImgUrl);
-        }
-
         currentImgUrl = URL.createObjectURL(blob);
-        onImageMsgFunc(currentImgUrl, imageTypeInt);
+        onImageMsgFunc(currentImgUrl, bufferType, frameID);
+    } 
+    // If firstByte is 4 (or whatever showed up in your console log)
+    else if (bufferType == 4) {
+        const rawDataBuffer = buffer.slice(2); 
+        const depthArray16 = new Uint16Array(rawDataBuffer);
+        onDepthMapFunc(depthArray16);
     }
 }

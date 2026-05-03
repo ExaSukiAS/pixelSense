@@ -1,21 +1,46 @@
+"""
+Left and Right perspoctive of two esp32 boards:
+    In most parts of code:
+        Here, "left board and right board" is defined in the perspective of the front side of the PCB where the camera is located, so the left board's camera is on the left side when you are facing the front of the PCB, and the right board's camera is on the right side.
+    In saving calibration images:
+        Here, "left and right" is reversed because of the camera orientation in the ESP32 glasses. The left board's camera captures the right perspective and the right board's camera captures the left perspective, so we save the left board's images in the "right" folder and the right board's images in the "left" folder for calibration to match the actual perspective captured by each camera.
+"""
+
 import time
 import json
 import re
+import cv2
 from termcolor import colored
+from halo import Halo
+import numpy as np
+
 from ESP32handler import ESP32
 from Gemini import GeminiClient
 from Tracker import Tracker
 from UIhandler import GUI
 from TTShandler import TTS
 from STThandler import STT
-from halo import Halo
+from Depthmap import DepthAnalysis
 
 # gemini configuration
-geminiKeyToUse = "3"
+GEMINI_KEY_ID = "4"
 
-currentMode = None # current mode (.freeform, .coord, .txt_rec, .img_des, .obj_dtc, streaming, None)
+# ESP32 IP addresses
+ESP_LEFT_IP = "192.168.137.164"
+ESP_RIGHT_IP = "192.168.137.178"
+
+# depth map visualization configurations
+MIN_DISTANCE_CM = 5.0
+MAX_DISTANCE_CM = 250.0
+
+# live features max FPS
+COORD_MAX_FPS = 10
+DEPTH_MAX_FPS = 2
+
+currentMode = None # current mode (.freeform, .coord, .txt_rec, .img_des, .obj_dtc, .depth_est, singleStreaming, dualStreaming, None)
 currentImage = None
 coordRunning = False # status of coordination feature
+depthRunning = False # status of depth estimation feature
 streamingState = {"left": False, "right": False} # stores the streaming state of the two esp, False for not streaming and True for streaming
 
 trackerConfidenceThreshold = 0.5 # minimum confidence threshold for tracking hand and target object in coordination mode
@@ -37,7 +62,7 @@ espOnindicated = False
 geminiAPIkey = ""
 with open("geminiAPI.json", "r") as jsonStringObj:
     apiKeys = json.load(jsonStringObj)
-    geminiAPIkey = apiKeys[geminiKeyToUse]
+    geminiAPIkey = apiKeys[GEMINI_KEY_ID]
 AIistructions = {}
 # fetch AI instructions
 with open("instructions.txt", "r") as file:
@@ -169,7 +194,7 @@ def espStatsHandler(boardType, stats):
 
 # handles images from esp32 
 # executes features(.txt_rec, .freeform, .obj_dtc, .img_des and .coord) upon receiving an image
-lastSendTime = 0
+lastCoordProcessTime = 0
 def espImageHandler(boardType, image):
     global coordRunning, tracker
     if tracker is not None:
@@ -180,13 +205,15 @@ def espImageHandler(boardType, image):
     currentImage = image
 
     prefix = b'\x01' if boardType == "left" else b'\x02' # convert the boardType to a single byte prefix ('1' for left, '2' for right)
-    imgWithHeader = prefix + image
+    dummyFrameID = 0 # we don't need frame id in single image stream, but we can set it to 0 as a placeholder
+    frameIDBytes = dummyFrameID.to_bytes(4, byteorder='big') # create 4byte frameID header
+    imgWithHeader = prefix +  frameIDBytes + image
 
     guiServer.sendMessage("IMG", imgWithHeader)
 
     if currentMode == ".freeform":
         guiServer.sendMessage("loader", "40@#$@Waiting for user prompt")
-        espLeft.requestMicSampleStream()
+        espRight.requestMicSampleStream()
         stt.startRecording()
     elif currentMode == ".txt_rec":
         guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
@@ -198,26 +225,27 @@ def espImageHandler(boardType, image):
         guiServer.sendMessage("loader", "60@#$@Waiting for Gemini response")
         geminiClientFast.generateContentStream(AIistructions[currentMode], "Describe this image.", currentImage)
 
-    if not coordRunning:
-        if currentMode == ".coord":
+    if not coordRunning and currentMode == ".coord":
             coordRunning = True
             guiServer.sendMessage("loader", "30@#$@Waiting for user prompt")
-            espLeft.requestMicSampleStream()
+            espRight.requestMicSampleStream()
             stt.startRecording()
     else:
-        global trackerInitialized, lastSendTime
-        if trackerInitialized and tracker is not None and time.time() - lastSendTime > 0.1: # cap at 10FPS
+        global trackerInitialized, lastCoordProcessTime
+        if trackerInitialized and tracker is not None and time.time() - lastCoordProcessTime > 1 / COORD_MAX_FPS: # cap at specified FPS
             global objRIO_norm, handRIO_norm, trackedObjName
             coordinates = tracker.getCoordinates(currentImage)
             
+            # Update Object coordinates only if we get a valid result. 
             if coordinates[1] is not None:
                 objRIO_norm = coordinates[1]
-            else:
+            elif objRIO_norm is None:
                 objRIO_norm = (0,0,0,0)
 
+            # Update Hand coordinates only if we get a valid result.
             if coordinates[0] is not None:
                 handRIO_norm = coordinates[0]
-            else:
+            elif handRIO_norm is None:
                 handRIO_norm = (0,0,0,0)
 
             objx, objy, objw, objh = objRIO_norm
@@ -241,13 +269,24 @@ def espImageHandler(boardType, image):
             coordinateJSONstring = json.dumps(coordinateDict)
 
             guiServer.sendMessage("coordinates", coordinateJSONstring)
-            lastSendTime = time.time()
+            guiServer.sendMessage("log", f"Move: {coordinates[2]}") # send grab direction
+            lastCoordProcessTime = time.time()
     return
 
 # store the incoming frames until both left and right frames are received for dual capture
 # Structure: {frameID: {"left": {imageData, TOF distance}, "right": {imageData, TOF distance}}}
-syncedImagePairs = {} 
+syncedImagePairs = {}
+
+imagePairsCache = {} # store the last 5 pairs of images for calibration (removes the oldest pair when a new pair is added beyond 5 pairs to limit memory usage)
+
+# handles synchronized images from both ESP32s for features that require dual images (e.g. camera calibration and depth estimation)
+lastDepthProcessTime = 0
 def espSyncedImageHandler(boardType, image, frameID, dist_cm):
+    global depthRunning, lastDepthProcessTime
+
+    if not depthRunning and currentMode == ".depth_est":
+        depthRunning = True
+
     if frameID is not None:
         # create the basic structure for the frameID if it doesn't exist
         if frameID not in syncedImagePairs:
@@ -257,20 +296,52 @@ def espSyncedImageHandler(boardType, image, frameID, dist_cm):
 
         # check if both left and right frames are received for the frameID
         if syncedImagePairs[frameID]["left"] is not None and syncedImagePairs[frameID]["right"] is not None:
+            if depthRunning and depthAnalyzer.processingImage:
+                return # drop the pair if depth analyzer is still processing the previous pair to avoid overlapping computations
+
             leftData = syncedImagePairs[frameID]["left"]
             rightData = syncedImagePairs[frameID]["right"]
 
-            # send the synchronized images and their TOF distances to the GUI
-            
-            leftPrefix = b'\x01' # prefix for left image
-            leftImgWithHeader = leftPrefix + leftData["image"]
+            frameIDBytes = frameID.to_bytes(4, byteorder='big') # create 4byte frameID header for sending as header with image payload to GUI
+
+
+            if depthRunning and time.time() - lastDepthProcessTime > 1 / DEPTH_MAX_FPS: # cap depth estimation at specified FPS to allow for processing time
+                lastDepthProcessTime = time.time()
+                depthMap = depthAnalyzer.getDepthMap(rightData["image"], leftData["image"]) # IMPORTANT: left andright images are reversed dueto the camera orientation in the ESP32 glasses, so we need to input right image first and left image second for correct depth estimation
+                if depthMap is not None:
+                    validMask = (depthMap > 0) & (depthMap <= MAX_DISTANCE_CM * 10.0)
+                    depthMapClipped = np.clip(depthMap, MIN_DISTANCE_CM * 10.0, MAX_DISTANCE_CM * 10.0)
+                    depthVis = cv2.normalize(depthMapClipped, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U) #normalize data to 0-255 values
+                    depthColor = cv2.applyColorMap(depthVis, cv2.COLORMAP_MAGMA) # apply colormap for better visualization
+                    depthColor[~validMask] = [0, 0, 0] # set invalid and out-of-range pixels to white
+
+                    # convert depthColor to jpeg bytes and send to GUI with a prefix to indicate it's a depth map
+                    _, depthColorJpeg = cv2.imencode('.jpg', depthColor)
+                    depthImgPrefix = b'\x03' # prefix for depth map image
+                    depthImgWithHeader = depthImgPrefix + frameIDBytes + depthColorJpeg.tobytes()
+                    guiServer.sendMessage("IMG", depthImgWithHeader)
+
+                    # send raw depth distances to GUI
+                    rawDepthBytes = b'\x04' + depthMapClipped.astype(np.uint16).tobytes()
+                    guiServer.sendMessage("IMG", rawDepthBytes)
+
+
+            # send syncrponized images to GUI with a prefix to indicate the board type
+            leftPrefix = b'\x01' # prefix for left image 
+            leftImgWithHeader = leftPrefix + frameIDBytes + leftData["image"]
             rightPrefix = b'\x02' # prefix for right image
-            rightImgWithHeader = rightPrefix + rightData["image"]
+            rightImgWithHeader = rightPrefix + frameIDBytes + rightData["image"]
 
             guiServer.sendMessage("IMG", leftImgWithHeader)
             guiServer.sendMessage("IMG", rightImgWithHeader)
 
-            del syncedImagePairs[frameID] # remove the pair from storage after processing to free up memory
+            # cache the image pairs in memory
+            imagePairsCache[frameID] = {"left": leftData["image"], "right": rightData["image"]}
+            if len(imagePairsCache) > 5: # limit cache to last 5 pairs
+                oldestFrameID = min(imagePairsCache.keys())
+                del imagePairsCache[oldestFrameID]
+
+            syncedImagePairs.pop(frameID, None) # remove the pair from storage after processing to free up memory
 
 def onMicSampleHandler(boardType, samples):
     stt.feedAudioSamples(samples)
@@ -316,64 +387,126 @@ def onGUIclientConnect():
 # handle messages from GUI client
 def onGUIclientMessage(message):
     global currentMode
-    if message in [".freeform", ".txt_rec", ".obj_dtc", ".img_des"]:
-        currentMode = message
-        espLeft.requestCapture("captureHigh")
-        guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
+
+    # parse the message to extract the type and content (if any)
+    msgType = ""
+    msg = ""
+    if "," in message:
+        msgType, msg = message.split(",", 1)
+    else:
+        msgType = message
+        msg = ""
+
+    if msgType in [".freeform", ".txt_rec", ".obj_dtc", ".img_des"]:
+        currentMode = msgType
+        espLeft.requestCapture("captureLow")
+        guiServer.sendMessage("activate", msgType) # assure gui that the feature is activated and is running
         guiServer.sendMessage("loader", "20@#$@Fetching image")
 
-    elif message == ".coord":
-        currentMode = message
+    elif msgType == ".coord":
+        currentMode = msgType
         espLeft.requestCapture("strtSingleImgStream")
-        guiServer.sendMessage("activate", message) # assure gui that the feature is activated and is running
+        guiServer.sendMessage("activate", msgType) # assure gui that the feature is activated and is running
         guiServer.sendMessage("loader", "15@#$@Fetching image")
+    
+    elif msgType == ".depth_est":
+        currentMode = msgType
+        espLeft.requestCapture("strtDualImgStream")
+        guiServer.sendMessage("activate", msgType) # assure gui that the feature is activated and is running
 
-    elif message == 'terminate':
+        espLeft.requestCapture("stpSingleImgStream")
+        espRight.requestCapture("stpSingleImgStream")
+        espLeft.requestCapture("strtDualImgStream")
+
+    elif msgType == 'terminate':
         espLeft.stopMicSampleStream()
+        tts.stopRunningSynth()
+        espLeft.requestCapture("stpDualImgStream")
+        espLeft.requestCapture("stpSingleImgStream")
+        espRight.requestCapture("stpSingleImgStream")
 
         # reset variables and objects
-        global trackedObjName, trackerInitialized, tracker, coordRunning
+        global trackedObjName, trackerInitialized, tracker, coordRunning, depthRunning
         currentMode = None
         trackedObjName = None
         trackerInitialized = False
         tracker = None
-
-        if coordRunning:
-            espLeft.requestCapture("stpSingleImgStream")
-
         coordRunning = False
+        depthRunning = False
 
         print(colored("All processes terminated.", "yellow"))
 
     # streaming messages
-    elif message == 'startLeftImageStream':
+    elif msgType == 'startLeftImageStream':
         currentMode = "streaming"
         streamingState["left"] = True
 
         # switch to synced dual streaming if boath ESP need to stream image
         if streamingState["left"] and streamingState["right"]:
+            currentMode = "dualStreaming"
             espRight.requestCapture("stpSingleImgStream")
-            time.sleep(2)
+            time.sleep(0.5)
             espLeft.requestCapture("strtDualImgStream")
         else:
+            currentMode = "singleStreaming"
             espLeft.requestCapture("strtSingleImgStream")
-    elif message == 'stopLeftImageStream':
+    elif msgType == 'stopLeftImageStream':
+        if streamingState["left"] and streamingState["right"]:
+            currentMode = "singleStreaming"
+            espLeft.requestCapture("stpDualImgStream")
+            time.sleep(0.5)
+            espRight.requestCapture("strtSingleImgStream")
+            streamingState["right"] = False
+        else:
+            currentMode = None
+            espLeft.requestCapture("stpSingleImgStream")
+
         streamingState["left"] = False
-        espLeft.requestCapture("stpSingleImgStream")
-    elif message == 'startRightImageStream':
+    elif msgType == 'startRightImageStream':
         currentMode = "streaming"
         streamingState["right"] = True
 
         # switch to synced dual streaming if boath ESP need to stream image
         if streamingState["left"] and streamingState["right"]:
+            currentMode = "dualStreaming"
             espLeft.requestCapture("stpSingleImgStream")
-            time.sleep(2)
+            time.sleep(0.5)
             espLeft.requestCapture("strtDualImgStream")
         else:
+            currentMode = "singleStreaming"
             espRight.requestCapture("strtSingleImgStream")
-    elif message == 'stopRightImageStream':
+    elif msgType == 'stopRightImageStream':
+        if streamingState["left"] and streamingState["right"]:
+            currentMode = "singleStreaming"
+            espLeft.requestCapture("stpDualImgStream")
+            time.sleep(0.5)
+            espLeft.requestCapture("strtSingleImgStream")
+            streamingState["left"] = False
+        else:
+            currentMode = None
+            espRight.requestCapture("stpSingleImgStream")
+
         streamingState["right"] = False
-        espRight.requestCapture("stpSingleImgStream")
+
+    elif msgType == "saveImg_calib" or msgType == "saveImg_sample":
+        if currentMode == "dualStreaming":
+            try:
+                frameID = int(msg)
+            except ValueError:
+                print(colored(f"Invalid frameID received: '{msg}'", "red"))
+                return # exit this block if it's not a valid number
+
+            """Left and Right paths are reversed because we are taking perspective of user who is wearing the glasses"""
+            if frameID in imagePairsCache:
+                pair = imagePairsCache[frameID]
+                with open(f"./{'camCalibImages' if msgType == 'saveImg_calib' else 'camSampleImages'}/right/{frameID}.jpg", "wb") as f:
+                    f.write(pair["left"])
+                with open(f"./{'camCalibImages' if msgType == 'saveImg_calib' else 'camSampleImages'}/left/{frameID}.jpg", "wb") as f:
+                    f.write(pair["right"])
+                print(colored(f"Saved image pair with frameID {frameID} for { 'calibration' if msgType == 'saveImg_calib' else 'sampling' }.", "green"))
+            else:
+                print(colored(f"No image pair found in cache for frameID {frameID}. Cannot save for { 'calibration' if msgType == 'saveImg_calib' else 'sampling' }.", "red"))
+
 
 if __name__ == '__main__':
     import multiprocessing
@@ -383,13 +516,16 @@ if __name__ == '__main__':
     geminiClientFast = GeminiClient(geminiAPIkey, "gemini-2.5-flash-lite", onContentChunk=fastGeminiResponseHandler)
     geminiClientCoord = GeminiClient(geminiAPIkey, "gemini-2.5-flash", onContentChunk=coordGeminiResponseHandler)
 
+    # depth analysis object
+    depthAnalyzer = DepthAnalysis("stereoCalibParams.json")
+
     # start GUI server
     guiServer = GUI(onConnect=onGUIclientConnect, onMessage=onGUIclientMessage)
     guiServer.start()
 
     # start esp32 websocket client
-    espLeft = ESP32(espIP="192.168.68.104", boardType="left", imgPort=5005, micPort=5006, statsPort=5007, onConnect=onespConnect, onMessage=espMessageHandler, onMicSamples=onMicSampleHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
-    espRight = ESP32(espIP="192.168.68.102", boardType="right", imgPort=5008, micPort=5009, statsPort=5010, onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
+    espLeft = ESP32(espIP=ESP_LEFT_IP, boardType="left", imgPort=5005, micPort=5006, statsPort=5007, onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
+    espRight = ESP32(espIP=ESP_RIGHT_IP, boardType="right", imgPort=5008, micPort=5009, statsPort=5010, onConnect=onespConnect, onMessage=espMessageHandler, onMicSamples=onMicSampleHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
     espLeft.start()
     espRight.start()
 
