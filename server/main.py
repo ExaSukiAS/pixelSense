@@ -26,12 +26,12 @@ from Depthmap import DepthAnalysis
 GEMINI_KEY_ID = "4"
 
 # ESP32 IP addresses
-ESP_LEFT_IP = "192.168.137.164"
-ESP_RIGHT_IP = "192.168.137.178"
+ESP_LEFT_IP = "192.168.137.59"
+ESP_RIGHT_IP = "192.168.137.162"
 
 # depth map visualization configurations
 MIN_DISTANCE_CM = 5.0
-MAX_DISTANCE_CM = 250.0
+MAX_DISTANCE_CM = 450.0
 
 # live features max FPS
 COORD_MAX_FPS = 10
@@ -349,7 +349,7 @@ def onMicSampleHandler(boardType, samples):
 # --------------- Text to speech object functions ---------------
 
 def onAudioSamples(audioChunk):
-    espLeft.queueSamplesForStream(audioChunk)
+    espRight.queueSamplesForStream(audioChunk)
     return
 
 def onSynthComplete():
@@ -371,7 +371,7 @@ def onSpeechTranscription(text):
         guiServer.sendMessage("loader", f"60@#$@Getting initial coordinates of hand and {text}")
         geminiClientCoord.generateContentStream(AIistructions[currentMode], text, currentImage)
 
-    espLeft.stopMicSampleStream()
+    espRight.stopMicSampleStream()
 
 # --------------- GUI client functions ---------------
 

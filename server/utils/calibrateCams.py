@@ -1,3 +1,8 @@
+"""
+Head over to https://docs.google.com/document/d/1VrpJIRoGIRWkF8NKaK-BCu0xftGnGTX-JKk-vFbD_xQ/edit?usp=sharing
+Follow the instructions in the link for the lowest stereo reprojection error
+"""
+
 import cv2
 import numpy as np
 import glob

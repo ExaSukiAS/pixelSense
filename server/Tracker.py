@@ -99,7 +99,7 @@ class Tracker:
 
                 normalizedHandCoord = (x_n, y_n, w_n, h_n)
             
-            grabDirection = self._getGrabDirection(normalizedObjCoord, normalizedObjCoord)
+            grabDirection = self._getGrabDirection(normalizedObjCoord, normalizedHandCoord)
 
             return normalizedHandCoord, normalizedObjCoord, grabDirection
 
