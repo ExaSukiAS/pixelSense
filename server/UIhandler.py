@@ -35,7 +35,7 @@ class GUI:
     def sendMessage(self, messageType, message):
         if self.loop and self.connectdClients:
             if messageType == "IMG":
-                header = b'\x01'
+                header = b'\x01' # image binary indicator 1B header
                 fullMessage = header + message
             else:
                 fullMessage = f"{messageType}$@#${message}"

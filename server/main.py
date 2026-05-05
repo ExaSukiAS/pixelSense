@@ -13,6 +13,7 @@ import cv2
 from termcolor import colored
 from halo import Halo
 import numpy as np
+import multiprocessing
 
 from ESP32handler import ESP32
 from Gemini import GeminiClient
@@ -20,22 +21,26 @@ from Tracker import Tracker
 from UIhandler import GUI
 from TTShandler import TTS
 from STThandler import STT
-from Depthmap import DepthAnalysis
+from DepthMap import DepthAnalysis
+from DepthToAudio import DepthToAudio
 
 # gemini configuration
 GEMINI_KEY_ID = "4"
 
 # ESP32 IP addresses
-ESP_LEFT_IP = "192.168.137.59"
-ESP_RIGHT_IP = "192.168.137.162"
+ESP_LEFT_IP = "192.168.137.62"
+ESP_RIGHT_IP = "192.168.137.89"
 
-# depth map visualization configurations
-MIN_DISTANCE_CM = 5.0
-MAX_DISTANCE_CM = 450.0
+# depth map configurations
+MIN_DEPTH_DIS = 5.0     # cm
+MAX_DEPTH_DIS = 450.0   # cm
+AUDIO_LENGTH = 2.0      # second
 
 # live features max FPS
 COORD_MAX_FPS = 10
 DEPTH_MAX_FPS = 2
+
+IGNORE_TOUCH_SENSORS = True
 
 currentMode = None # current mode (.freeform, .coord, .txt_rec, .img_des, .obj_dtc, .depth_est, singleStreaming, dualStreaming, None)
 currentImage = None
@@ -150,32 +155,43 @@ def onespConnect(boardType):
 
 # handles messages from esp32
 def espMessageHandler(boardType, message):
-    global currentMode
-    """
-    if message == "$#TXT#$touch1_single":
-        guiServer.sendMessage("activate", ".txt_rec")
-        currentMode = ".txt_rec"
-        esp.requestCapture("captureHigh")
-    elif message == "$#TXT#$touch1_double":
-        guiServer.sendMessage("activate", ".obj_dtc")
-        currentMode = ".obj_dtc"
-        esp.requestCapture("captureHigh")
-    elif message == "$#TXT#$touch1_hold":
-        guiServer.sendMessage("activate", ".img_des")
-        currentMode = ".img_des"
-        esp.requestCapture("captureHigh")
-    elif message == "$#TXT#$touch2_single":
-        guiServer.sendMessage("activate", ".freeform")
-        currentMode = ".freeform"
-        esp.requestCapture("captureHigh")
-    elif message == "$#TXT#$touch2_double":
-        guiServer.sendMessage("activate", ".coord")
-        currentMode = ".coord"
-        esp.requestCapture("captureHigh")
-    elif message == "$#TXT#$touch2_hold":
-        guiServer.sendMessage("activate", "terminateTask")
-        esp.requestCapture("stpSingleImgStream")
-    """
+    if not IGNORE_TOUCH_SENSORS:
+        global currentMode
+        
+        if boardType == 'right':
+            if message == "$#TXT#$touchSingle":
+                currentMode = ".txt_rec"
+            elif message == "$#TXT#$touchDouble":
+                currentMode = ".obj_dtc"
+            elif message == "$#TXT#$touchHold":
+                currentMode = ".img_des"
+            
+            if message in ['$#TXT#$touchSingle', '$#TXT#$touchDouble', '$#TXT#$touchHold']:
+                espLeft.requestCapture("captureLow")
+                guiServer.sendMessage("activate", currentMode) # assure gui that the feature is activated and is running
+                guiServer.sendMessage("loader", "20@#$@Fetching image")
+
+        elif boardType == 'left':
+            if message == "$#TXT#$touchSingle":
+                currentMode = ".freeform"
+                espLeft.requestCapture("captureLow")
+                guiServer.sendMessage("activate", ".freeform") # assure gui that the feature is activated and is running
+                guiServer.sendMessage("loader", "20@#$@Fetching image")
+            elif message == "$#TXT#$touchDouble":
+                currentMode = ".coord"
+                espLeft.requestCapture("strtSingleImgStream")
+                guiServer.sendMessage("activate", ".coord") # assure gui that the feature is activated and is running
+                guiServer.sendMessage("loader", "15@#$@Fetching image")
+            elif message == "$#TXT#$touchHold":
+                currentMode = ".depth_est"
+                currentMode = ".depth_est"
+                espLeft.requestCapture("strtDualImgStream")
+                guiServer.sendMessage("activate", ".depth_est") # assure gui that the feature is activated and is running
+
+                espLeft.requestCapture("stpSingleImgStream")
+                espRight.requestCapture("stpSingleImgStream")
+                espLeft.requestCapture("strtDualImgStream")
+
 
 def espStatsHandler(boardType, stats):
     espStats = [
@@ -307,14 +323,19 @@ def espSyncedImageHandler(boardType, image, frameID, dist_cm):
 
             if depthRunning and time.time() - lastDepthProcessTime > 1 / DEPTH_MAX_FPS: # cap depth estimation at specified FPS to allow for processing time
                 lastDepthProcessTime = time.time()
-                depthMap = depthAnalyzer.getDepthMap(rightData["image"], leftData["image"]) # IMPORTANT: left andright images are reversed dueto the camera orientation in the ESP32 glasses, so we need to input right image first and left image second for correct depth estimation
+                depthMap = depthAnalyzer.getDepthMap(rightData["image"], leftData["image"]) # IMPORTANT: left and right images are reversed due to the camera orientation in the ESP32 glasses, so we need to input right image first and left image second for correct depth estimation
                 if depthMap is not None:
-                    validMask = (depthMap > 0) & (depthMap <= MAX_DISTANCE_CM * 10.0)
-                    depthMapClipped = np.clip(depthMap, MIN_DISTANCE_CM * 10.0, MAX_DISTANCE_CM * 10.0)
+                    validMask = (depthMap > 0) & (depthMap <= MAX_DEPTH_DIS * 10.0)
+                    depthMapClipped = np.clip(depthMap, MIN_DEPTH_DIS * 10.0, MAX_DEPTH_DIS * 10.0)
                     depthVis = cv2.normalize(depthMapClipped, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U) #normalize data to 0-255 values
                     depthColor = cv2.applyColorMap(depthVis, cv2.COLORMAP_MAGMA) # apply colormap for better visualization
                     depthColor[~validMask] = [0, 0, 0] # set invalid and out-of-range pixels to white
-
+                    
+                    if depthToAudio.playingAudio == False:
+                        depthMap2D = depthMapClipped.reshape(480, 640)
+                        depthMapSmall = cv2.resize(depthMap2D, (160, 120), interpolation=cv2.INTER_AREA)
+                        depthToAudio.playDepthAudio(depthMap=depthMapSmall, duration=AUDIO_LENGTH, maxDistance=MAX_DEPTH_DIS*10)
+                        
                     # convert depthColor to jpeg bytes and send to GUI with a prefix to indicate it's a depth map
                     _, depthColorJpeg = cv2.imencode('.jpg', depthColor)
                     depthImgPrefix = b'\x03' # prefix for depth map image
@@ -509,7 +530,6 @@ def onGUIclientMessage(message):
 
 
 if __name__ == '__main__':
-    import multiprocessing
     multiprocessing.freeze_support() 
 
     # gemini objects
@@ -519,13 +539,37 @@ if __name__ == '__main__':
     # depth analysis object
     depthAnalyzer = DepthAnalysis("stereoCalibParams.json")
 
+    # depth to audio conversion object
+    depthToAudio = DepthToAudio()
+
     # start GUI server
     guiServer = GUI(onConnect=onGUIclientConnect, onMessage=onGUIclientMessage)
     guiServer.start()
 
     # start esp32 websocket client
-    espLeft = ESP32(espIP=ESP_LEFT_IP, boardType="left", imgPort=5005, micPort=5006, statsPort=5007, onConnect=onespConnect, onMessage=espMessageHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
-    espRight = ESP32(espIP=ESP_RIGHT_IP, boardType="right", imgPort=5008, micPort=5009, statsPort=5010, onConnect=onespConnect, onMessage=espMessageHandler, onMicSamples=onMicSampleHandler, onImage=espImageHandler, onSyncedImage=espSyncedImageHandler, onStats=espStatsHandler)
+    espLeft = ESP32(espIP=ESP_LEFT_IP, 
+                    boardType="left", 
+                    imgPort=5005, 
+                    micPort=5006, 
+                    statsPort=5007, 
+                    onConnect=onespConnect, 
+                    onMessage=espMessageHandler, 
+                    onImage=espImageHandler,
+                    onSyncedImage=espSyncedImageHandler, 
+                    onStats=espStatsHandler
+                   )
+    espRight = ESP32(espIP=ESP_RIGHT_IP, 
+                     boardType="right", 
+                     imgPort=5008, 
+                     micPort=5009, 
+                     statsPort=5010, 
+                     onConnect=onespConnect, 
+                     onMessage=espMessageHandler, 
+                     onMicSamples=onMicSampleHandler, 
+                     onImage=espImageHandler, 
+                     onSyncedImage=espSyncedImageHandler, 
+                     onStats=espStatsHandler
+                    )
     espLeft.start()
     espRight.start()
 

@@ -29,6 +29,7 @@ class DepthAnalysis:
         self.processingImage = False # indicates if a current image is being processed in getDepthMap() function
     
     # left and right images should be raw JPG bytes (640x480 resolution)
+    # returns a 1D array of the depth map
     def getDepthMap(self, leftImg, rightImg):
         if self.processingImage:
             return None # skip if currently processing an image to avoid overlapping computations

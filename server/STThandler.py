@@ -42,3 +42,15 @@ class STT:
     
     def feedAudioSamples(self, samples):
         self.recorder.feed_audio(samples)
+
+""" 
+If running the server for the first time, uncomment the following code 
+and run "python STThandler.py" in the terminal to initialize the speech-to-text model 
+If not done, the code will indefinetly loop in initialization state when running main.py
+"""
+
+# Uncomment if running the server for the first time:
+"""
+if __name__ == '__main__':
+    stt = STT(lambda t: print(t))
+"""
