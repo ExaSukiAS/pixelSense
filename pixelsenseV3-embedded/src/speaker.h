@@ -32,10 +32,7 @@ class Speaker{
         uint32_t lastSampleTime = 0;
         const uint32_t streamTimeout = 300;
 
-        enum ToneType {
-            TOUCH1_SINGLE, TOUCH1_DOUBLE, TOUCH1_HOLD,
-            TOUCH2_SINGLE, TOUCH2_DOUBLE, TOUCH2_HOLD, ERROR
-        };
+        enum ToneType {TOUCH_SINGLE, TOUCH_DOUBLE, TOUCH_HOLD, ERROR};
 
         // constructor
         Speaker(int BCLKpin, int LRCpin, int DINpin, float amplificationGain){
@@ -190,27 +187,16 @@ class Speaker{
         // plays a certain tone
         void playTone(ToneType tone) {
             switch(tone) {
-                case TOUCH1_SINGLE:
+                case TOUCH_SINGLE:
                     playFreq(500, 100);
                     playFreq(2000, 100);
                     break;
-                case TOUCH1_DOUBLE:
+                case TOUCH_DOUBLE:
                     playFreq(1000, 100);
                     playFreq(3000, 100);
                     break;
-                case TOUCH1_HOLD:
+                case TOUCH_HOLD:
                     playFreq(1500, 300);
-                    break;
-                case TOUCH2_SINGLE:
-                    playFreq(2000, 100);
-                    playFreq(500, 100);
-                    break;
-                case TOUCH2_DOUBLE:
-                    playFreq(3000, 100);
-                    playFreq(1000, 100);
-                    break;
-                case TOUCH2_HOLD:
-                    playFreq(2500, 300);
                     break;
                 case ERROR:
                     for(int i=0; i<2; i++) {

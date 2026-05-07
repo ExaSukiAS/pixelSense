@@ -12,7 +12,7 @@ but pin layout and some parameters will be different based on the board
 'L' board acts as the Master and 'R' board acts as the Slave during Synced Dual Image Streaming
 change the value of BOARD_TYPE to switch between the two boards before uploading the code
 */
-#define BOARD_TYPE 'R'
+#define BOARD_TYPE 'L'
 
 // custom
 #include "speaker.h"
@@ -455,18 +455,18 @@ void loop() {
     int touchState = touch.getTouchState();
     switch(touchState){
       case 1: // single tap
-        webSocketServer.broadcastTXT("$#TXT#$touch1_single");
-        speaker.playTone(Speaker::TOUCH1_SINGLE);
+        webSocketServer.broadcastTXT("$#TXT#$touchSingle");
+        speaker.playTone(Speaker::TOUCH_SINGLE);
         delay(500); // debounce delay
         break;
       case 2: // double tap
-        webSocketServer.broadcastTXT("$#TXT#$touch1_double");
-        speaker.playTone(Speaker::TOUCH1_DOUBLE);
+        webSocketServer.broadcastTXT("$#TXT#$touchDouble");
+        speaker.playTone(Speaker::TOUCH_DOUBLE);
         delay(500); // debounce delay
         break;
       case 3: // hold
-        webSocketServer.broadcastTXT("$#TXT#$touch1_hold");
-        speaker.playTone(Speaker::TOUCH1_HOLD);
+        webSocketServer.broadcastTXT("$#TXT#$touchHold");
+        speaker.playTone(Speaker::TOUCH_HOLD);
         delay(500); // debounce delay
         break;
     }
