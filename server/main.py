@@ -28,8 +28,8 @@ from DepthToAudio import DepthToAudio
 GEMINI_KEY_ID = "4"
 
 # ESP32 IP addresses
-ESP_LEFT_IP = "192.168.137.46"
-ESP_RIGHT_IP = "192.168.137.154"
+ESP_LEFT_IP = "192.168.68.105"
+ESP_RIGHT_IP = "192.168.68.104"
 
 # depth map configurations
 MIN_DEPTH_DIS = 5.0     # cm
@@ -147,11 +147,11 @@ def onespConnect(boardType):
     if boardType == "right":
         global espRightConnected
         espRightConnected = True
-        print(colored("Right ESP32 connected!", "light_green"))
+        print(colored("Right ESP32 connected!", "green"))
     elif boardType == "left":
         global espLeftConnected
         espLeftConnected = True
-        print(colored("Left ESP32 connected!", "light_green"))
+        print(colored("Left ESP32 connected!", "green"))
 
 # handles messages from esp32
 def espMessageHandler(boardType, message):
@@ -400,7 +400,7 @@ def onSpeechTranscription(text):
 def onGUIclientConnect():
     global guiConnected
     guiConnected = True
-    print(colored("GUI client connected!", "light_green"))
+    print(colored("GUI client connected!", "green"))
 
     global espOnindicated
     espOnindicated = False
@@ -564,10 +564,10 @@ if __name__ == '__main__':
                      micPort=5009, 
                      statsPort=5010, 
                      onConnect=onespConnect, 
-                     onMessage=espMessageHandler, 
-                     onMicSamples=onMicSampleHandler, 
+                     onMessage=espMessageHandler,  
                      onImage=espImageHandler, 
                      onSyncedImage=espSyncedImageHandler, 
+                     onMicSamples=onMicSampleHandler,
                      onStats=espStatsHandler
                     )
     espLeft.start()

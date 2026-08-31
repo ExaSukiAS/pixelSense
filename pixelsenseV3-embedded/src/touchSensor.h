@@ -18,7 +18,7 @@ class TouchSensor{
   public:
     // constructor to initialize touch sensor pin
     TouchSensor(int touchPin) {
-      pinMode(touchPin, INPUT);
+      pinMode(touchPin, INPUT_PULLDOWN);
       pin = touchPin;
     }
 

@@ -17,7 +17,7 @@ class STT:
             use_microphone=False,
             spinner=False,
         )
-        print(colored("STT initialized!", "light_green"))
+        print(colored("STT initialized!", "green"))
 
     def _sttWorker(self):
         if self.recorder:

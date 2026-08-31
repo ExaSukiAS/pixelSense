@@ -29,7 +29,7 @@ change the value of BOARD_TYPE to switch between the two boards before uploading
 #endif
 
 // WiFi credentials
-const char* ssid = "EXA_desktop";
+const char* ssid = "Amartya";
 const char* password = "amartya@@2020";
 
 // static pins (same on left and right boards)
@@ -65,25 +65,25 @@ uint16_t imgFrameID = 0; // holds the imgFrame id for a streaming session
 bool dualImgStreamStarted = false;
 volatile bool rightEspCaptureDone = false;
 
-// laser sensor object
-#define SEALEVELPRESSURE_HPA (1013.25)
-Adafruit_VL53L0X lox = Adafruit_VL53L0X();
-
-// touch sensor objects
-TouchSensor touch(TOUCH_PIN);
+TouchSensor touch(TOUCH_PIN); // touch sensor object
 
 // mic and speaker objects
 Speaker speaker(SPEAKER_CLK_PIN, SPEAKER_WS_PIN, SPEAKER_DATA_PIN, 2.0);
 Microphone mic(MIC_WS_PIN, MIC_DATA_PIN, 5.0);
 
-// laser distance sensor variables
-unsigned long lastRequestTime = 0;
-const unsigned long sampleInterval = 50; 
-bool waitingForReading = false; // flag to indicate if we're waiting for a sensor reading to be sent before taking another reading
-const int alertDistance = 100; // distance threshold in mm for alert
-bool distanceSensorBooted = false;
-bool wasAlerting = false; // tracks if the buzzer was active
-uint16_t dist_mm = 0; // current distance reading from TOF sensor
+// laser distance sensor 
+#if BOARD_TYPE == 'L'
+  #define SEALEVELPRESSURE_HPA (1013.25)
+  Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+
+  unsigned long lastRequestTime = 0;
+  const unsigned long sampleInterval = 50; 
+  bool waitingForReading = false; // flag to indicate if we're waiting for a sensor reading to be sent before taking another reading
+  const int alertDistance = 100; // distance threshold in mm for alert
+  bool distanceSensorBooted = false;
+  bool wasAlerting = false; // tracks if the buzzer was active
+  uint16_t dist_mm = 0; // current distance reading from TOF sensor
+#endif
 
 // Websocket server (port 9000)
 const int espWSport = 9000;
@@ -103,7 +103,7 @@ WiFiUDP udpServer;
 DeviceMonitor devMonitor(BATTERY_PIN);
 int deviceStats[8];
 const unsigned long deviceStatsSendingInterval = 500; 
-unsigned long lastDevuceStatsSendTime = 0;
+unsigned long lastDeviceStatsSendTime = 0;
 
 // toggles image streaming state
 void toggleSingleImgStream(bool toggle){
@@ -248,7 +248,7 @@ void sendAudioUDP(int16_t* samples){
 // sends device stats via UDP
 void sendDeviceStats(){
   devMonitor.getInfo(deviceStats); // fills index 0-5
-  deviceStats[6] = dist_mm;     // TOF distance
+  deviceStats[6] = (BOARD_TYPE == 'L') ? dist_mm : 0;
   deviceStats[7] = WiFi.RSSI(); // wifi signal strength
 
   udpServer.beginPacket(computerIP, computerMsgPort);
@@ -313,7 +313,7 @@ void onEspMessage(String head, String tail){
 
       // capture and send image to server(computer)
       if (camera.captureStaticImg() && camera.latestFb != NULL) {
-        const uint16_t dist_cm = dist_mm/10;
+        const uint16_t dist_cm = 0; // TOF distance (only available on Left ESP)
         sendImgFrameUDP(camera.latestFb, dist_cm, 1, syncedImgFrameID);
         camera.clearFrameBuffer();
       }
@@ -348,14 +348,17 @@ void setup() {
 
     // Attact GPIOs
     pinMode(ONBOARD_LED_PIN, OUTPUT);
-    Wire.begin(LASER_SDA_PIN, LASER_SCL_PIN); // attach laser sensor
 
-    // initialize laser distance sensor
-    if(lox.begin()){
-      distanceSensorBooted = true;
-    } else {
-      speaker.playTone(Speaker::ERROR); // play error tone to indicate sensor failure
-    }
+    #if BOARD_TYPE == 'L'
+      Wire.begin(LASER_SDA_PIN, LASER_SCL_PIN); // attach laser sensor
+
+      // initialize laser distance sensor
+      if(lox.begin()){
+        distanceSensorBooted = true;
+      } else {
+        speaker.playTone(Speaker::ERROR); // play error tone to indicate sensor failure
+      }
+    #endif
 
     webSocketServer.begin();
     webSocketServer.onEvent(webSocketEvent);
@@ -375,28 +378,19 @@ void setup() {
 void loop() {
     webSocketServer.loop();
     EspSerial.listenToMsg();
-
     unsigned long now = millis();
 
-    // request distance reading at regular intervals
-    if (!waitingForReading && now - lastRequestTime >= sampleInterval && distanceSensorBooted) {
-      if (lox.startRange()) {
-        lastRequestTime = now;
-        waitingForReading = true;
-      }
-    }
-
     // send device stats to server at regular intervals
-    if(now - lastDevuceStatsSendTime >= deviceStatsSendingInterval){
+    if(now - lastDeviceStatsSendTime >= deviceStatsSendingInterval){
       if(computerDiscovered){
         sendDeviceStats();
       }
-      lastDevuceStatsSendTime = now;
+      lastDeviceStatsSendTime = now;
     }
 
     // handle single image streaming
     if(camera.frameReady){
-      const uint16_t dist_cm = dist_mm/10;
+      const uint16_t dist_cm = (BOARD_TYPE == 'L') ? (dist_mm / 10) : 0;
       imgFrameID++;
       sendImgFrameUDP(camera.latestFb, dist_cm, 0, imgFrameID);
       camera.clearFrameBuffer();
@@ -420,37 +414,7 @@ void loop() {
       sendAudioUDP(mic.micSamples);
       mic.audioSamplesReady = false;
     }
-
-    // check if laser sensor range is ready (non-blocking check)
-    if (waitingForReading && lox.isRangeComplete() && distanceSensorBooted) {
-      dist_mm = lox.readRangeResult(); // last completed measurement
-      waitingForReading = false;
-
-      if (dist_mm > 0 && dist_mm < alertDistance) {
-        wasAlerting = true; // mark that we are currently alerting
-        int freq;
-        switch(dist_mm) {
-          case 0 ... 40:
-            freq = 4000;
-            break;
-          case 41 ... 60:
-            freq = 2000;
-            break;
-          case 61 ... 80:
-            freq = 1000;
-            break;
-          default:
-            freq = 500;
-        }
-        speaker.playFreq(freq, true);
-      } else {
-        // only clear the buffer if we were previously alerting
-        if (wasAlerting) {
-            wasAlerting = false; // reset the state
-        }
-      }
-    }
-
+    
     // read touch sensors and emit events
     int touchState = touch.getTouchState();
     switch(touchState){
@@ -470,6 +434,46 @@ void loop() {
         delay(500); // debounce delay
         break;
     }
+
+    #if BOARD_TYPE == 'L'
+      // request distance reading at regular intervals
+      if (!waitingForReading && now - lastRequestTime >= sampleInterval && distanceSensorBooted) {
+        if (lox.startRange()) {
+          lastRequestTime = now;
+          waitingForReading = true;
+        }
+      }
+
+      // check if laser sensor range is ready (non-blocking check)
+      if (waitingForReading && lox.isRangeComplete() && distanceSensorBooted) {
+        dist_mm = lox.readRangeResult(); // last completed measurement
+        waitingForReading = false;
+
+        if (dist_mm > 0 && dist_mm < alertDistance) {
+          wasAlerting = true; // mark that we are currently alerting
+          int freq;
+          switch(dist_mm) {
+            case 0 ... 40:
+              freq = 4000;
+              break;
+            case 41 ... 60:
+              freq = 2000;
+              break;
+            case 61 ... 80:
+              freq = 1000;
+              break;
+            default:
+              freq = 500;
+          }
+          speaker.playFreq(freq, true);
+        } else {
+          // only clear the buffer if we were previously alerting
+          if (wasAlerting) {
+              wasAlerting = false; // reset the state
+          }
+        }
+      }
+    #endif
 
     vTaskDelay(pdMS_TO_TICKS(5)); // gives esp32 some breathing space
 }

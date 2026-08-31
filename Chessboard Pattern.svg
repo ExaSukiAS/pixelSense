@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="210mm"
+   height="297mm"
+   viewBox="0 0 210 297"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   sodipodi:docname="Chessboard Pattern.svg"
+   inkscape:export-filename="Chessboard Pattern.pdf"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#999999"
+     borderopacity="1"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="0.35355339"
+     inkscape:cx="507.70267"
+     inkscape:cy="612.35447"
+     inkscape:window-width="1366"
+     inkscape:window-height="697"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <g
+       id="g19"
+       transform="translate(4.9902544,3.4985428)">
+      <g
+         id="g3">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect1"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect2"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <g
+         id="g3-5"
+         transform="translate(45,45)">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect1-5"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect2-1"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <g
+         id="g6">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect4"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect5"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <g
+         id="g9"
+         transform="translate(45,45)">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect7"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect8"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <g
+         id="g12"
+         transform="translate(0,90)">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect10"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect11"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <g
+         id="g15"
+         transform="translate(44.999999,135)">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect13"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect14"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <g
+         id="g16"
+         transform="translate(0,180)">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect15"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect16"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <g
+         id="g18"
+         transform="translate(44.999999,225)">
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect17"
+           width="45"
+           height="45"
+           x="10"
+           y="10" />
+        <rect
+           style="fill:#000000;stroke-width:0.305288"
+           id="rect18"
+           width="45"
+           height="45"
+           x="100"
+           y="10" />
+      </g>
+      <rect
+         style="fill:none;stroke:#000000;stroke-width:0.498904;stroke-dasharray:none"
+         id="rect19"
+         width="180.53339"
+         height="270.50998"
+         x="9.7430525"
+         y="9.7464676" />
+    </g>
+  </g>
+</svg>

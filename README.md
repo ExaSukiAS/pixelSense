@@ -1,40 +1,154 @@
-# PixelSense by NeuronSpark
+# PixelSense
 
-**PixelSense** is an innovative wearable assistive technology project developed by **NeuronSpark**. Designed to significantly improve the daily lives of individuals with visual impairments, PixelSense is seamlessly integrated into a pair of eyeglasses.
+AI-powered smart eyewear designed to make the lives of visually impaired people interactive and easier. 
 
-This cutting-edge device is packed with features, including:
+> "Listen to the world"
 
-* **Camera:**  Captures the wearer's surroundings, providing visual input for analysis.
-* **Infrared Distance Sensor:**  Detects obstacles and measures distances, enhancing spatial awareness.
-* **Microphone:**  Records audio, enabling voice commands and environmental sound analysis.
-* **Speaker:**  Provides audio feedback, delivering information and guidance to the user.
-* **Internet-Connected MCU (Microcontroller Unit):**  Processes data, connects to online services, and enables advanced features.
-* **User Interaction Buttons:**  Allows for intuitive control and interaction with the device's functionalities.
+---
 
-## Getting Started with PixelSense
+## Instructions for developer
 
-To run PixelSense, please follow these steps:
+## Keyboard Shortcuts in UIreact
+* `s` - Capture stereo sample image
+* `c` - Capture stereo image for calibration
 
-1. **Install Node.js:** Ensure that Node.js is installed on your system. You can download it from the official [Node.js website](https://nodejs.org/).
+## Calibration image checklist:
+#### Section 1: The Nine-Grid (Planar / Zero Tilt)
+1. **Center**: Board exactly in the middle of the frame, parallel to sensor.
+2. **Top-Left**: Board corners touching the top-left edge of the frame.
+3. **Top-Center**: Board touching the top edge, centered horizontally.
+4. **Top-Right**: Board corners touching the top-right edge.
+5. **Mid-Right**: Board touching the right edge, centered vertically.
+6. **Bottom-Right**: Board corners touching the bottom-right edge.
+7. **Bottom-Center**: Board touching the bottom edge, centered horizontally.
+8. **Bottom-Left**: Board corners touching the bottom-left edge.
+9. **Mid-Left**: Board touching the left edge, centered vertically.
 
-2. **Install Dependencies:** Navigate to the PixelSense project directory in your terminal and run the following command to download all necessary packages:
+#### Section 2: Lens Distortion Extremes
+10. **Extreme Top-Left**: Pattern squares nearly exiting the frame.
+11. **Extreme Top-Right**: Pattern squares nearly exiting the frame.
+12. **Extreme Bottom-Left**: Pattern squares nearly exiting the frame.
+13. **Extreme Bottom-Right**: Pattern squares nearly exiting the frame.
 
-   ```bash
-   npm install
-   ```
+#### Section 3: Pitch & Yaw (Angular Diversity)
+14. **Center Pitch Up**: Bottom of the board tilted toward the lens (~30–45°).
+15. **Center Pitch Down**: Top of the board tilted toward the lens.
+16. **Center Yaw Left**: Left side of the board tilted toward the lens.
+17. **Center Yaw Right**: Right side of the board tilted toward the lens.
+18. **Top-Left Tilt**: Board at top-left, angled toward the optical center.
+19. **Top-Right Tilt**: Board at top-right, angled toward the optical center.
+20. **Bottom-Left Tilt**: Board at bottom-left, angled toward the optical center.
+21. **Bottom-Right Tilt**: Board at bottom-right, angled toward the optical center.
 
-3. **Create Configuration Files:** You need to create two files in the project directory:
+#### Section 4: Z-Axis Depth Variation
+22. **Close-Up Center**: Board fills ~80% of the field of view.
+23. **Distant Center**: Board fills ~15–20% of the field of view.
+24. **Close-Up Top**: Board filling the upper half of the frame.
+25. **Close-Up Bottom**: Board filling the lower half of the frame.
+26. **Distant Top**: Board small, positioned at the top edge.
+27. **Distant Bottom**: Board small, positioned at the bottom edge.
 
-   * **`user.jpg`:** This file will be used by the server to store images
+#### Section 5: Compound Angles & Rotations
+28. **Diagonal Tilt A**: Top-left corner closest to lens, bottom-right furthest.
+29. **Diagonal Tilt B**: Top-right corner closest to lens, bottom-left furthest.
+32. **Diamond Center**: Rotate board 45° in the middle of frame.
+33. **Diamond Left**: 45° rotation at the left edge.
+34. **Diamond Right**: 45° rotation at the right edge.
 
-   * **`geminiAPI.json`:**  This file will store your Gemini API key.
+#### Section 6: Fill-Gap Sweeps
+35. **Upper Mid-Field**: Between center and top edge.
+36. **Lower Mid-Field**: Between center and bottom edge.
+37. **Left Mid-Field**: Between center and left edge.
+38. **Right Mid-Field**: Between center and right edge.
+39. **Corner Square Detail**: Close-up focused specifically on a frame corner.
+40. **Final Validation**: Center shot, slightly offset to the left.
+---
 
-4. **Configure Gemini API Key:** Open the `geminiAPI.json` file and paste your API key in the following JSON format:
+## Project Overview
+PixelSense is a wearable assistive technology project integrated into eyeglasses, featuring:
+* Two cameras for stereo vision
+* Laser distance sensors
+* Microphones
+* Stereo speakers
+* Internet-connected MCU
+* User-interaction buttons
 
-   ```json
-   {
-       "apiKey": "your-api-key"
-   }
-   ```
+The project aims to enhance the independence of visually impaired individuals by enabling them to perceive their environment through spatial audio and descriptive instructions.
 
-   **Important:** Replace `"your-api-key"` with your actual Gemini API key. Ensure the API key is correctly placed within the JSON structure.
+---
+
+## Features
+
+### 1. Depth Perception
+Enables users to navigate their surroundings through real-time auditory environmental mapping. Leveraging dual-lens stereoscopic cameras, the device continuously generates a high-precision absolute depth map, which is translated into a multi-dimensional spatial audio landscape delivered via integrated stereo speakers. The spatialization algorithm encodes the environment using three parameters:
+* **X-Axis (Horizontal Localization):** Mapped through interaural level differences (ILD). The system performs a rhythmic "sweep" across the scene, transitioning audio intensity from the left to right channel.
+* **Y-Axis (Vertical Elevation):** Represented through a frequency-mapped pentatonic scale consisting of 20 distinct bands. The pitch modulates from a fundamental frequency at the top of the frame to a perfect fifth, reaching a full octave at the bottom.
+* **Z-Axis (Proximity & Distance):** Communicated through dynamic volume modulation governed by an inverse-exponential function (distant objects produce a subtle auditory footprint, while immediate obstacles trigger a significantly louder signal).
+
+### 2. Freeform
+Enables users to understand their environment through conversational descriptions. The device captures an image, processes user-posed questions (via microphone) about the surroundings, and delivers answers (via inbuilt speakers) using a Large Language Model (LLM).
+
+### 3. Coordination
+Provides object location relative to the user's hand in real-time. It utilizes a Vision Transformer (ViT) tracker to provide real-time spatial guidance. By performing a continuous geometric analysis of bounding boxes for both the hand and the designated object (uttered by the user), the system calculates precise directional vectors translated into frequency-coded auditory feedback.
+
+### 4. Text Recognition
+Reads text aloud by capturing an image of text (books, signs, handwriting), performing Optical Character Recognition (OCR), and vocalizes the content through the inbuilt speakers.
+
+### 5. Proximity Alert System
+Provides high-speed obstacle detection by utilizing two integrated Time-of-Flight (ToF) sensors for real-time obstacle avoidance. Operating with a 50ms latency, it ensures rapid response times for identifying physical barriers (such as walls) using frequency-modulated auditory alerts where the acoustic pitch dynamically shifts in relation to proximity.
+
+---
+
+## Problem Addressing
+
+* **Lack of 3D Spatial Awareness and Safe Navigation:** Visually impaired individuals struggle to perceive room layouts, overhanging objects, or hazard distances. PixelSense addresses this through Depth Perception and its Proximity Alert system (50ms low-latency ToF alerts).
+* **Difficulty Grasping and Locating Specific Objects:** Finding items often requires frustrating or dangerous "tactile fumbling." The Coordination feature uses a Vision Transformer (ViT) tracker to guide the user's hand precisely to the target using acoustic vectors.
+* **Disconnect from Complex Environmental Context:** Missing out on contextual nuances limits autonomy. The Freeform feature combines camera capture with an LLM to answer open-ended questions about the surroundings.
+* **Inaccessibility of Printed Text in the Physical World:** Menus, signs, and books present constant barriers. The Text Recognition module automates reading via high-accuracy OCR and reads it aloud.
+
+---
+
+## Hardware Details
+
+| Component | Purpose |
+| --- | --- |
+| **2x ESP32 S3 MCU** | Connect to server, Audio processing and streaming, image processing and streaming, reading TOF and touch sensors, and connecting everything together. |
+| **2x OV3660 3MP camera** | Capturing images. |
+| **2x MSM261D3526H1CPM digital MEMS microphone** | Capturing audio samples and sending to ESP32 via I2S for user interactions. |
+| **2x MAX98357A DAC + Amplifier** | Playing audio samples received from ESP32 via I2S. |
+| **2x VL53L0X TOF infrared-laser distance sensor** | Low-latency obstacle avoidance. |
+| **2x TTP223 touch sensors** | User interactions. |
+| **500mAH Battery** | Powering the whole system. |
+
+---
+
+## Server-Side (Back-End) Details
+
+Because the wearable device has limited hardware capabilities, heavy AI tasks are offloaded to an internet-connected, Python-based server that connects to individual ESP32 microcontrollers via **WebSockets**.
+
+### Network Protocols
+* **TCP:** Used for establishing a connection through a handshake and sending/receiving small commands and information (e.g., ToF distance readings, feature execution orders).
+* **UDP:** Used to stream audio and JPEG images bidirectionally between the server and the ESP32.
+
+### Core Server Executions
+
+#### Speech Recognition
+When a feature requiring speech recognition is requested, the ESP32 streams audio samples (8Khz, 16bit quality) to the server via UDP. The server transcribes the audio in real-time using OpenAI's **Tiny Whisper** model.
+
+#### The LLM & Text-to-Speech
+Features like Text Recognition and Freeform rely on an LLM for human-like descriptions.
+* **Model:** Gemini 3 Flash model is used for superior text recognition and natural text output.
+* **Text-to-Speech:** Text from the LLM is transcribed into 12KHz, 16bit audio via **Piper text to speech** and streamed from the server to the ESP32 via UDP to be played through the DAC and Amplifier modules.
+
+#### Coordination Feature Architecture
+To bypass the latency of continuous live video tracking with an LLM and the category limitations of generic models (like YOLO), PixelSense uses a hybrid architecture operating in three phases:
+1. **Initialization (LLM):** The user names an object, a single camera frame is sent to **Gemini 2.5 Flash** (optimized for spatial awareness), which generates initial bounding box coordinates (x, y, width, height).
+2. **Real-Time Tracking (ViT):** The initial bounding box is fed to a high-speed **Vision Transformer (ViT) tracker**, which continuously tracks the object in real-time without heavy computational overhead.
+3. **Spatial Guidance:** **MediaPipe** algorithms track the user's hand simultaneously. The system calculates the directional vector between the hand and the tracked object, sending coordinates to the ESP32 to generate dynamic, frequency-coded audio cues.
+
+#### Depth Map Estimation Pipeline
+1. **Synchronous Data Streaming:** Dual ESP32 MCUs capture and stream synchronized JPEG image pairs (640x480 resolution) via UDP.
+2. **Stereo Rectification:** The server aligns the frames using **OpenCV’s stereo rectification** algorithm, using pre-calculated matrices from chessboard pattern calibration.
+3. **Disparity Calculation:** Rectified pairs are processed via a **Stereo Semi-Global Block Matching (SGBM)** algorithm to calculate pixel disparity.
+4. **Map Refinement:** The raw disparity map is processed through a **Weighted Least Squares (WLS)** filter to reduce noise and smooth edges.
+5. **Final Depth Generation:** The absolute 3D depth map is calculated by combining the refined disparity map with pre-calibrated physical parameters (baseline lens distance and focal lengths).
