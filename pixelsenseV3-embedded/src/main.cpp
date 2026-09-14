@@ -12,7 +12,7 @@ but pin layout and some parameters will be different based on the board
 'L' board acts as the Master and 'R' board acts as the Slave during Synced Dual Image Streaming
 change the value of BOARD_TYPE to switch between the two boards before uploading the code
 */
-#define BOARD_TYPE 'L'
+#define BOARD_TYPE 'R'
 
 // custom
 #include "speaker.h"
@@ -46,14 +46,12 @@ const char* password = "amartya@@2020";
     #define LASER_SCL_PIN    6
     #define TOUCH_PIN        44
     #define BATTERY_PIN      3
-    #define INTERCOMM_TX     4
-    #define INTERCOMM_RX     5
+    #define INTERCOMM_TX     5
+    #define INTERCOMM_RX     4
 #else
     #define SPEAKER_WS_PIN   43
     #define SPEAKER_CLK_PIN  6
     #define SPEAKER_DATA_PIN 5
-    #define LASER_SDA_PIN    7
-    #define LASER_SCL_PIN    44
     #define TOUCH_PIN        9
     #define BATTERY_PIN      8
     #define INTERCOMM_TX     4
@@ -82,8 +80,9 @@ Microphone mic(MIC_WS_PIN, MIC_DATA_PIN, 5.0);
   const int alertDistance = 100; // distance threshold in mm for alert
   bool distanceSensorBooted = false;
   bool wasAlerting = false; // tracks if the buzzer was active
-  uint16_t dist_mm = 0; // current distance reading from TOF sensor
 #endif
+
+uint16_t dist_mm = 0; // current distance reading from TOF sensor
 
 // Websocket server (port 9000)
 const int espWSport = 9000;
@@ -248,7 +247,7 @@ void sendAudioUDP(int16_t* samples){
 // sends device stats via UDP
 void sendDeviceStats(){
   devMonitor.getInfo(deviceStats); // fills index 0-5
-  deviceStats[6] = (BOARD_TYPE == 'L') ? dist_mm : 0;
+  deviceStats[6] = dist_mm;
   deviceStats[7] = WiFi.RSSI(); // wifi signal strength
 
   udpServer.beginPacket(computerIP, computerMsgPort);
@@ -390,7 +389,7 @@ void loop() {
 
     // handle single image streaming
     if(camera.frameReady){
-      const uint16_t dist_cm = (BOARD_TYPE == 'L') ? (dist_mm / 10) : 0;
+      const uint16_t dist_cm = dist_mm/10;
       imgFrameID++;
       sendImgFrameUDP(camera.latestFb, dist_cm, 0, imgFrameID);
       camera.clearFrameBuffer();

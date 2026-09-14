@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include "esp_system.h"
 #include "esp_heap_caps.h"
-#include "driver/temp_sensor.h" 
 
 class DeviceMonitor {
 private:
@@ -17,10 +16,7 @@ private:
 
 public:
     DeviceMonitor(int batteryPin) {
-        // Initialize the temperature sensor configuration
-        temp_sensor_config_t temp_sensor = TSENS_CONFIG_DEFAULT();
-        temp_sensor_set_config(temp_sensor);
-        temp_sensor_start();
+        // REMOVED legacy temp_sensor_start() initialization as it is no longer needed
 
         batPin = batteryPin;
         pinMode(batPin, INPUT);
@@ -52,8 +48,7 @@ public:
         uint32_t totalPSRAM = hasPSRAM ? heap_caps_get_total_size(MALLOC_CAP_SPIRAM) : 0;
         uint32_t freePSRAM = hasPSRAM ? heap_caps_get_free_size(MALLOC_CAP_SPIRAM) : 0;
 
-        float tsens_out;
-        temp_sensor_read_celsius(&tsens_out);
+        float tsens_out = temperatureRead();
 
         info[0] = (int)(totalPhysicalSRAM / 1024);
         info[1] = (int)(totalPSRAM / 1024);

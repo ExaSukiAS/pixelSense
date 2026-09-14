@@ -28,8 +28,8 @@ from DepthToAudio import DepthToAudio
 GEMINI_KEY_ID = "4"
 
 # ESP32 IP addresses
-ESP_LEFT_IP = "192.168.68.105"
-ESP_RIGHT_IP = "192.168.68.104"
+ESP_LEFT_IP = "192.168.68.106"
+ESP_RIGHT_IP = "192.168.68.107"
 
 # depth map configurations
 MIN_DEPTH_DIS = 5.0     # cm
