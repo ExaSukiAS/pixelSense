@@ -29,7 +29,7 @@ change the value of BOARD_TYPE to switch between the two boards before uploading
 #endif
 
 // WiFi credentials
-const char* ssid = "Amartya";
+const char* ssid = "exatron";
 const char* password = "amartya@@2020";
 
 // static pins (same on left and right boards)
@@ -52,7 +52,6 @@ const char* password = "amartya@@2020";
     #define SPEAKER_WS_PIN   43
     #define SPEAKER_CLK_PIN  6
     #define SPEAKER_DATA_PIN 5
-    #define TOUCH_PIN        9
     #define BATTERY_PIN      8
     #define INTERCOMM_TX     4
     #define INTERCOMM_RX     3
@@ -63,7 +62,9 @@ uint16_t imgFrameID = 0; // holds the imgFrame id for a streaming session
 bool dualImgStreamStarted = false;
 volatile bool rightEspCaptureDone = false;
 
-TouchSensor touch(TOUCH_PIN); // touch sensor object
+#if BOARD_TYPE == 'L'
+  TouchSensor touch(TOUCH_PIN); // touch sensor object
+#endif
 
 // mic and speaker objects
 Speaker speaker(SPEAKER_CLK_PIN, SPEAKER_WS_PIN, SPEAKER_DATA_PIN, 2.0);
@@ -103,6 +104,11 @@ DeviceMonitor devMonitor(BATTERY_PIN);
 int deviceStats[8];
 const unsigned long deviceStatsSendingInterval = 500; 
 unsigned long lastDeviceStatsSendTime = 0;
+
+#if BOARD_TYPE == 'R'
+  volatile bool slaveCaptureRequested = false;
+  volatile uint16_t syncedImgFrameID = 0;
+#endif
 
 // toggles image streaming state
 void toggleSingleImgStream(bool toggle){
@@ -216,23 +222,28 @@ void processUDPAudioData() {
 }
 
 // sends image via UDP
+volatile uint32_t udpDropCount = 0;
+
 void sendImgFrameUDP(camera_fb_t *fb, uint16_t dist_cm, uint8_t imgFrameType, uint16_t imgFrameID){
-    for(uint32_t offset = 0; offset < fb->len; offset += imageStreamPktSize){
-      uint16_t chunk = imageStreamPktSize;
-      if(offset + chunk > fb->len){
-          chunk = fb->len - offset;
-      }
+  for(uint32_t offset = 0; offset < fb->len; offset += imageStreamPktSize){
+    uint16_t chunk = imageStreamPktSize;
+    if(offset + chunk > fb->len) chunk = fb->len - offset;
 
+    bool sent = false;
+    for(int attempt = 0; attempt < 8 && !sent; attempt++){
       udpServer.beginPacket(computerIP, computerImgPort);
-      udpServer.write((uint8_t*)&imgFrameID, 2);      // 2-byte imgFrame id
-      udpServer.write((uint8_t*)&offset, 4);          // 4-byte payload offset
-      udpServer.write((uint8_t*)&imgFrameType, 1);    // 1-byte stream type (0 for single stream and 1 for dual stream)
-      udpServer.write((uint8_t*)&dist_cm, 2);         // 2-byte TOF distance
-      udpServer.write(fb->buf + offset, chunk);       // actual payload
-      udpServer.endPacket();
-
-      vTaskDelay(pdMS_TO_TICKS(10)); // small delay between packets to give esp32 some breathing space
+      udpServer.write((uint8_t*)&imgFrameID, 2);
+      udpServer.write((uint8_t*)&offset, 4);
+      udpServer.write((uint8_t*)&imgFrameType, 1);
+      udpServer.write((uint8_t*)&dist_cm, 2);
+      udpServer.write(fb->buf + offset, chunk);
+      sent = (udpServer.endPacket() == 1);
+      if(!sent) vTaskDelay(pdMS_TO_TICKS(2));   // let the driver drain
     }
+    if(!sent) udpDropCount++;
+
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
 }
 
 // sends audio stream from mic via UDP
@@ -255,9 +266,9 @@ void sendDeviceStats(){
   udpServer.endPacket();
 }
 
-#if BOARD_TYPE == 'L'
-  void dualImgFrameCaptureTask(void *params){
-    for(;;){
+void dualImgFrameCaptureTask(void *params){
+  for(;;){
+    #if BOARD_TYPE == 'L'
       if(!dualImgStreamStarted){
         vTaskDelay(pdMS_TO_TICKS(5));
         continue;
@@ -265,29 +276,36 @@ void sendDeviceStats(){
 
       imgFrameID++;
       rightEspCaptureDone = false;
-      EspSerial.requestCapture(imgFrameID); // request Right ESP (slave) to capture and send image with the same imgFrame id
+      EspSerial.requestCapture(imgFrameID); 
 
-      // capture and send image to server(computer)
       if (camera.captureStaticImg() && camera.latestFb != NULL) {
         const uint16_t dist_cm = dist_mm/10;
         sendImgFrameUDP(camera.latestFb, dist_cm, 1, imgFrameID);
         camera.clearFrameBuffer();
       }
 
-      // wait for Right ESP to finish capturung and sending the image
       uint32_t timeout = millis();
       while(!rightEspCaptureDone){
         vTaskDelay(pdMS_TO_TICKS(5));
-        
-        // safety: timeout after 2 seconds so the master doesn't hang forever
-        if(millis() - timeout > 2000) {
-          Serial.println("Slave Timeout!");
-          break; 
-        }
+        if(millis() - timeout > 2000) break; 
       }
-    }
+    #else
+      if(slaveCaptureRequested){
+        slaveCaptureRequested = false;
+
+        if (camera.captureStaticImg() && camera.latestFb != NULL) {
+          const uint16_t dist_cm = 0; 
+          sendImgFrameUDP(camera.latestFb, dist_cm, 1, syncedImgFrameID);
+          camera.clearFrameBuffer();
+        }
+
+        EspSerial.indicateFrameSent(); 
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(5));
+      }
+    #endif
   }
-#endif
+}
 
 // this function fires whenever the Left ESP or Right ESP receives a message through the Inter-ESP-UART
 void onEspMessage(String head, String tail){
@@ -308,16 +326,8 @@ void onEspMessage(String head, String tail){
       camera.setResolution('l');
       EspSerial.indicateDualStreamReady(); // reply to Left ESP (master) that Right ESP(slave) is ready for dual streaming
     } else if(head == "captureImg"){
-      uint16_t syncedImgFrameID = tail.toInt(); // same imgFrame id as Left ESP(master) 
-
-      // capture and send image to server(computer)
-      if (camera.captureStaticImg() && camera.latestFb != NULL) {
-        const uint16_t dist_cm = 0; // TOF distance (only available on Left ESP)
-        sendImgFrameUDP(camera.latestFb, dist_cm, 1, syncedImgFrameID);
-        camera.clearFrameBuffer();
-      }
-
-      EspSerial.indicateFrameSent(); // indicate Left ESP (master) that the image was sent 
+      syncedImgFrameID = tail.toInt(); 
+      slaveCaptureRequested = true; 
     }
   #endif
 }
@@ -338,6 +348,7 @@ void setup() {
 
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {}  // wait until connected to wifi
+    WiFi.setSleep(false);
 
     udpServer.begin(espUDPport);
 
@@ -365,10 +376,7 @@ void setup() {
     xTaskCreatePinnedToCore(camera.frameCaptureTaskWrapper, "ImgFrameCapture", 4096, &camera, 1, NULL, 0); // pin single image streaming task to Core 0
     xTaskCreatePinnedToCore(speaker.speakerTaskWrapper, "AudioPlayback", 4096, &speaker, 1, NULL, 1); // pin audio playback task to Core 1
     xTaskCreatePinnedToCore(mic.micTaskWrapper, "AudioCapture", 4096, &mic, 1, NULL, 1); // pin audio playback task to Core 1
-
-    #if BOARD_TYPE == 'L'
-      xTaskCreatePinnedToCore(dualImgFrameCaptureTask, "DualImgFrameCapture", 4096, &camera, 1, NULL, 0); // pin dual image streaming task to Core 0
-    #endif
+    xTaskCreatePinnedToCore(dualImgFrameCaptureTask, "DualImgFrameCapture", 4096, &camera, 1, NULL, 0); // pin dual image streaming task to Core 0
 
     digitalWrite(ONBOARD_LED_PIN, LOW); // turn on onboard LED to indicate ready state
     camera.setResolution('h'); // start with high resolution
@@ -397,42 +405,43 @@ void loop() {
     }
 
     // handle incoming UDP data
-    int udpPacketSize = udpServer.parsePacket();
-    if (udpPacketSize) {
-      if(udpPacketSize > 4){
-        if(!computerDiscovered) {
-          computerIP = udpServer.remoteIP();
-          computerDiscovered = true; 
-        }
+    int udpPacketSize;
+    while ((udpPacketSize = udpServer.parsePacket()) > 0) {
+      if (udpPacketSize > 4) {
+        if(!computerDiscovered){ computerIP = udpServer.remoteIP(); computerDiscovered = true; }
         processUDPAudioData();
       }
+      udpServer.flush();   // drop anything left over
     }
 
     // send audio samples from mic if they are ready
     if(mic.audioSamplesReady){
+      Serial.println("Sending audio!");
       sendAudioUDP(mic.micSamples);
       mic.audioSamplesReady = false;
     }
     
     // read touch sensors and emit events
-    int touchState = touch.getTouchState();
-    switch(touchState){
-      case 1: // single tap
-        webSocketServer.broadcastTXT("$#TXT#$touchSingle");
-        speaker.playTone(Speaker::TOUCH_SINGLE);
-        delay(500); // debounce delay
-        break;
-      case 2: // double tap
-        webSocketServer.broadcastTXT("$#TXT#$touchDouble");
-        speaker.playTone(Speaker::TOUCH_DOUBLE);
-        delay(500); // debounce delay
-        break;
-      case 3: // hold
-        webSocketServer.broadcastTXT("$#TXT#$touchHold");
-        speaker.playTone(Speaker::TOUCH_HOLD);
-        delay(500); // debounce delay
-        break;
-    }
+    #if BOARD_TYPE == 'L'
+      int touchState = touch.getTouchState();
+      switch(touchState){
+        case 1: // single tap
+          webSocketServer.broadcastTXT("$#TXT#$touchSingle");
+          speaker.playTone(Speaker::TOUCH_SINGLE);
+          delay(500); // debounce delay
+          break;
+        case 2: // double tap
+          webSocketServer.broadcastTXT("$#TXT#$touchDouble");
+          speaker.playTone(Speaker::TOUCH_DOUBLE);
+          delay(500); // debounce delay
+          break;
+        case 3: // hold
+          webSocketServer.broadcastTXT("$#TXT#$touchHold");
+          speaker.playTone(Speaker::TOUCH_HOLD);
+          delay(500); // debounce delay
+          break;
+      }
+    #endif
 
     #if BOARD_TYPE == 'L'
       // request distance reading at regular intervals

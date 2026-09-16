@@ -18,7 +18,7 @@ class Speaker{
         float gain = 1;
     public:
         // buffer settings
-        static const uint16_t jitterBufferSize = 30000;
+        static const uint16_t jitterBufferSize = 6000;
         int16_t jitterBuffer[jitterBufferSize]; // circular buffer to store audio samples
         volatile int head = 0; // index pointer for storing sample to jitterBuffer
         volatile int tail = 0; // index pointer for playing sample from jitterBuffer
